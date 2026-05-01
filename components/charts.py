@@ -10,6 +10,7 @@ from typing import List, Optional
 _ACCENT = '#2563EB'
 _COLORS = px.colors.qualitative.Set2
 _MAX_POINTS = 1000
+_LINE_DASHES = ['solid', 'dot', 'dash', 'dashdot']
 
 
 def render_timeseries_chart(
@@ -18,6 +19,7 @@ def render_timeseries_chart(
     numeric_cols: List[str],
     group_col: Optional[str] = None,
     selected_metrics: Optional[List[str]] = None,
+    agg_method: str = 'mean',
 ) -> Optional[go.Figure]:
     """
     Generate a time-series line chart.
@@ -28,6 +30,7 @@ def render_timeseries_chart(
         numeric_cols: All available numeric columns.
         group_col: Optional column to split lines by colour.
         selected_metrics: Subset of numeric_cols to plot; defaults to first 3.
+        agg_method: pandas aggregation string ('mean', 'sum', 'max', 'min').
 
     Returns:
         Plotly Figure or None on error.
@@ -41,29 +44,36 @@ def render_timeseries_chart(
         if not metrics:
             return None
 
+        title_metrics = ', '.join(metrics[:3]) + (f' 他{len(metrics)-3}件' if len(metrics) > 3 else '')
+
         if group_col and group_col in df_p.columns:
-            agg = {m: 'sum' for m in metrics}
-            df_g = df_p.groupby([date_col, group_col], as_index=False).agg(agg)
+            agg_dict = {m: agg_method for m in metrics}
+            df_g = df_p.groupby([date_col, group_col], as_index=False).agg(agg_dict)
             df_g = _downsample(df_g)
-            fig = px.line(
-                df_g, x=date_col, y=metrics[0], color=group_col,
-                title=f"時系列推移: {metrics[0]}",
-                color_discrete_sequence=_COLORS,
-                template='plotly_white',
-            )
-            for extra in metrics[1:]:
-                for grp in df_g[group_col].unique():
-                    sub = df_g[df_g[group_col] == grp]
+
+            groups = sorted(df_g[group_col].dropna().unique(), key=str)
+            group_colors = {grp: _COLORS[i % len(_COLORS)] for i, grp in enumerate(groups)}
+
+            fig = go.Figure()
+            for grp in groups:
+                sub = df_g[df_g[group_col] == grp]
+                color = group_colors[grp]
+                for j, metric in enumerate(metrics):
+                    label = f"{grp}  {metric}" if len(metrics) > 1 else str(grp)
                     fig.add_scatter(
-                        x=sub[date_col], y=sub[extra],
-                        name=f"{grp} – {extra}",
-                        mode='lines',
-                        line=dict(dash='dot'),
+                        x=sub[date_col], y=sub[metric],
+                        name=label, mode='lines+markers',
+                        line=dict(color=color, width=2, dash=_LINE_DASHES[j % len(_LINE_DASHES)]),
+                        marker=dict(size=4),
+                        legendgroup=str(grp),
                     )
+            fig.update_layout(title=f"時系列推移: {title_metrics}", template='plotly_white')
+
         else:
-            agg = {m: 'sum' for m in metrics}
-            df_g = df_p.groupby(date_col, as_index=False).agg(agg)
+            agg_dict = {m: agg_method for m in metrics}
+            df_g = df_p.groupby(date_col, as_index=False).agg(agg_dict)
             df_g = _downsample(df_g)
+
             fig = go.Figure()
             for i, metric in enumerate(metrics):
                 fig.add_scatter(
@@ -72,7 +82,7 @@ def render_timeseries_chart(
                     line=dict(color=_COLORS[i % len(_COLORS)], width=2),
                     marker=dict(size=4),
                 )
-            fig.update_layout(title="時系列推移", template='plotly_white')
+            fig.update_layout(title=f"時系列推移: {title_metrics}", template='plotly_white')
 
         fig.update_layout(
             xaxis_title=date_col,
@@ -182,7 +192,6 @@ def render_scatter_chart(
         df_p[x_col] = pd.to_numeric(df_p[x_col], errors='coerce')
         df_p[y_col] = pd.to_numeric(df_p[y_col], errors='coerce')
         df_p = df_p.dropna(subset=[x_col, y_col])
-        df_p = _downsample(df_p)
 
         kwargs: dict = dict(
             x=x_col, y=y_col,
@@ -195,11 +204,14 @@ def render_scatter_chart(
             kwargs['color'] = color_col
         if size_col and size_col in df_p.columns:
             df_p[size_col] = pd.to_numeric(df_p[size_col], errors='coerce')
+            # Drop NaN in size column to prevent Plotly error
+            df_p = df_p.dropna(subset=[size_col])
             min_s = df_p[size_col].min()
-            if pd.notna(min_s) and min_s < 0:
+            if pd.notna(min_s) and min_s <= 0:
                 df_p[size_col] = df_p[size_col] - min_s + 1
             kwargs['size'] = size_col
 
+        df_p = _downsample(df_p)
         fig = px.scatter(df_p, **kwargs)
         fig.update_layout(height=420, margin=dict(l=20, r=20, t=50, b=20))
         return fig
@@ -285,13 +297,22 @@ def render_spc_chart(
         else:
             agg = df_p.groupby(date_col, as_index=False)[value_col].mean()
 
-        agg = _downsample(agg)
+        if agg.empty or agg[value_col].isna().all():
+            return None
 
-        mean_val = agg[value_col].mean()
-        std_val = agg[value_col].std()
+        # Compute control limits on the full aggregated data (before downsampling)
+        mean_val = float(agg[value_col].mean())
+        std_val = float(agg[value_col].std())
+
+        # If std is 0 or NaN, use a small epsilon so limits are visible
+        if not np.isfinite(std_val) or std_val == 0:
+            std_val = abs(mean_val) * 0.001 if mean_val != 0 else 0.001
+
         ucl = mean_val + 3 * std_val
         lcl = mean_val - 3 * std_val
         agg['_oc'] = (agg[value_col] > ucl) | (agg[value_col] < lcl)
+
+        agg = _downsample(agg)
 
         fig = go.Figure()
 
@@ -373,7 +394,12 @@ def render_pareto_chart(
             .sort_values(value_col, ascending=False)
             .head(top_n)
         )
+        grouped = grouped.reset_index(drop=True)
+
         total = grouped[value_col].sum()
+        if total == 0 or not np.isfinite(total):
+            return None
+
         grouped['_cum_pct'] = (grouped[value_col].cumsum() / total * 100).round(1)
 
         fig = go.Figure()
@@ -390,9 +416,18 @@ def render_pareto_chart(
             marker=dict(size=7),
             yaxis='y2',
         )
-        fig.add_hline(
-            y=80, line_dash='dot', line_color='#9ca3af',
-            annotation_text='80%', yref='y2',
+        # 80% reference line using add_shape (more reliable than add_hline on y2)
+        fig.add_shape(
+            type='line',
+            x0=0, x1=1, xref='paper',
+            y0=80, y1=80, yref='y2',
+            line=dict(color='#9ca3af', dash='dot', width=1.5),
+        )
+        fig.add_annotation(
+            x=1.01, y=80, xref='paper', yref='y2',
+            text='80%', showarrow=False,
+            font=dict(color='#9ca3af', size=11),
+            xanchor='left',
         )
         fig.update_layout(
             title=f'パレート図: {category_col} × {value_col}',
@@ -403,7 +438,7 @@ def render_pareto_chart(
                 range=[0, 110], ticksuffix='%',
             ),
             height=420,
-            margin=dict(l=20, r=60, t=50, b=20),
+            margin=dict(l=20, r=80, t=50, b=20),
         )
         return fig
     except Exception:

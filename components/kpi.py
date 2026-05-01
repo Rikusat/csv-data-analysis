@@ -59,6 +59,18 @@ def render_kpi_cards(
 # ── Private helpers ──────────────────────────────────────────
 
 
+_LOWER_IS_BETTER_KEYWORDS = [
+    'defect', '欠陥', 'ng', 'fail', '不良', 'density', '密度',
+    'error', 'エラー', 'reject', '不合格', 'loss', 'ロス',
+    'particle', 'パーティクル',
+]
+
+
+def _is_lower_better(label: str) -> bool:
+    low = label.lower()
+    return any(kw in low for kw in _LOWER_IS_BETTER_KEYWORDS)
+
+
 def _render_card(
     label: str,
     value: float,
@@ -67,7 +79,9 @@ def _render_card(
 ) -> None:
     delta_html = ""
     if delta is not None:
-        color = "#10b981" if delta >= 0 else "#ef4444"
+        lower_better = _is_lower_better(label)
+        positive_is_good = not lower_better
+        color = "#10b981" if (delta >= 0) == positive_is_good else "#ef4444"
         arrow = "▲" if delta >= 0 else "▼"
         delta_html = (
             f'<p style="color:{color};font-size:12px;margin:4px 0 0 0;">'
@@ -91,6 +105,11 @@ def _aggregate(series: pd.Series, method: str) -> float:
 
 
 def _fmt(value: float) -> str:
+    try:
+        if not isinstance(value, (int, float)) or not (value == value) or abs(value) == float('inf'):
+            return '—'
+    except Exception:
+        return '—'
     if abs(value) >= 1_000_000:
         return f"{value / 1_000_000:.2f}M"
     if abs(value) >= 1_000:

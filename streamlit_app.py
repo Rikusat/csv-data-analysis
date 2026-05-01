@@ -62,7 +62,7 @@ st.markdown(
 
 
 # ── Demo data（半導体工場） ────────────────────────────────────
-@st.cache_data
+@st.cache_data(ttl=86400)
 def _demo_data() -> pd.DataFrame:
     """
     Generate 60-day semiconductor fab demo data.
@@ -135,10 +135,12 @@ def _load_csv(file_bytes: bytes, _filename: str) -> pd.DataFrame:
 
 
 # ── Export helpers ────────────────────────────────────────────
+@st.cache_data
 def _to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
 
 
+@st.cache_data
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as w:
@@ -174,6 +176,11 @@ def _render_sidebar():
     st.sidebar.markdown(
         f"**行数:** {len(df_raw):,}　**列数:** {df_raw.shape[1]}"
     )
+
+    if not is_demo:
+        with st.sidebar.expander("📄 データプレビュー（先頭5行）", expanded=False):
+            st.dataframe(df_raw.head(5), use_container_width=True)
+
     st.sidebar.markdown("---")
 
     col_info = detect_columns(df_raw)
@@ -193,6 +200,14 @@ def _render_sidebar():
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### フィルター")
+    if st.sidebar.button("🔄 フィルターをリセット", key="reset_filters"):
+        for col in col_info['category'][:3]:
+            k = f"filter_cat_{col}"
+            if k in st.session_state:
+                st.session_state[k] = 'すべて'
+        if "filter_date_range" in st.session_state:
+            del st.session_state["filter_date_range"]
+        st.rerun()
 
     return df_raw, col_info, is_demo
 
@@ -213,7 +228,11 @@ def _tab_overview(df: pd.DataFrame, col_info: dict) -> None:
             '<p class="section-title">歩留まり・欠陥トレンド（クイックビュー）</p>',
             unsafe_allow_html=True,
         )
-        fig = render_timeseries_chart(df, col_info['date'][0], col_info['numeric'])
+        quick_metrics = col_info['numeric'][:2]
+        fig = render_timeseries_chart(
+            df, col_info['date'][0], col_info['numeric'],
+            selected_metrics=quick_metrics,
+        )
         if fig:
             st.plotly_chart(fig, use_container_width=True)
 
@@ -240,7 +259,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
     # ── トレンドグラフ ────────────────────────────────────────
     st.markdown('<p class="section-title">トレンドグラフ</p>', unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         selected_metrics = st.multiselect(
             "指標を選択（複数可）",
@@ -252,11 +271,14 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
         group_options = ['なし'] + col_info['category']
         sel = st.selectbox("グループ列", group_options, key='ts_group')
         group_col = None if sel == 'なし' else sel
+    with c3:
+        ts_agg = st.selectbox("集計方法", ['平均', '合計', '最大', '最小'], key='ts_agg')
+        ts_agg_en = {'平均': 'mean', '合計': 'sum', '最大': 'max', '最小': 'min'}[ts_agg]
 
     if not selected_metrics:
         st.warning("指標を1つ以上選択してください。")
     else:
-        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics)
+        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -278,6 +300,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
     fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
     if fig_spc:
         st.plotly_chart(fig_spc, use_container_width=True)
+        st.caption("🔴 赤×印: 中心値 ± 3σ を超えた管理外点。工程異常の可能性があります。CL=中心線, UCL/LCL=上下管理限界。")
     else:
         st.error(
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
@@ -396,11 +419,12 @@ def _tab_data(df: pd.DataFrame) -> None:
             key='tbl_cols',
         )
     with c2:
+        safe_len = max(1, len(df))
         row_limit = st.number_input(
             "表示行数",
-            min_value=10,
-            max_value=max(10, len(df)),
-            value=min(100, len(df)),
+            min_value=1,
+            max_value=safe_len,
+            value=min(100, safe_len),
             step=10,
             key='tbl_rows',
         )
@@ -444,6 +468,8 @@ def main() -> None:
     cat_selections = render_category_filters(df_raw, col_info['category'])
 
     df = apply_filters(df_raw, cat_selections, date_range, date_col)
+    if len(df) < len(df_raw):
+        st.sidebar.caption(f"絞り込み後: {len(df):,} 行 / {len(df_raw):,} 行")
 
     if is_demo:
         st.markdown(
