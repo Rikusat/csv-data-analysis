@@ -92,6 +92,23 @@ CSVアップロード or デモデータ
 
 ---
 
+## 半導体工場向け追加機能
+
+### charts.py に追加済みの関数
+- `render_spc_chart(df, date_col, value_col, group_col)` — SPC 管理図（±3σ）
+- `render_pareto_chart(df, category_col, value_col, agg_method, top_n)` — パレート図
+
+### デモデータ（`_demo_data()`）
+- 60日 × 4工程（リソグラフィ/エッチング/CVD/CMP）× 2装置
+- カラム: DATE, PROCESS, EQUIPMENT_ID, WAFER_IN, WAFER_OUT, YIELD_RATE, DEFECT_DENSITY, THICKNESS_NM, UNIFORMITY_PCT, UPTIME_PCT, THROUGHPUT_WPH
+
+### detect.py の注意事項
+- `_is_date_column` で numeric dtype のカラムは date と誤判定しない制約を追加
+  （例: UPTIME_PCT に 'time' が含まれても numeric のまま）
+- 日付判定に年範囲チェック（1990–2100）を追加
+
+---
+
 ## 禁止事項
 
 - `st.experimental_rerun` の使用（`st.rerun` を使う）

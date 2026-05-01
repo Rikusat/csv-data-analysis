@@ -9,14 +9,27 @@ DATE_KEYWORDS = [
     '日時', '期間', 'week', '週', 'day', '日',
 ]
 CATEGORY_KEYWORDS = [
+    # 汎用
     'plant', 'line', 'process', 'equipment', '拠点', 'ライン', '工程', '設備',
     'status', '状態', 'type', '種別', '区分', 'category', 'カテゴリ',
     'name', '名前', '名称', 'code', 'コード',
+    # 半導体
+    'lot', 'ロット', 'wafer', 'ウェーハ', 'recipe', 'レシピ',
+    'chamber', 'チャンバー', 'layer', 'レイヤー', 'product', '品種',
+    'step', 'ステップ', 'shift', 'シフト', 'operator', 'オペレータ',
+    'defect_type', '欠陥種別', 'fail', '不良', 'grade', 'グレード',
 ]
 NUMERIC_KEYWORDS = [
+    # 汎用
     'qty', 'amount', 'count', 'num', 'total', 'sum', 'avg', 'rate', 'ratio',
     '数', '量', '率', '金額', '合計', '平均', '最大', '最小', 'price', '価格',
     'cost', 'コスト',
+    # 半導体
+    'yield', '歩留', 'defect', '欠陥', 'thickness', '膜厚', 'uniformity', '均一性',
+    'uptime', '稼働率', 'throughput', 'スループット', 'cycle', 'サイクル',
+    'roughness', '粗さ', 'particle', 'パーティクル', 'overlay', 'オーバーレイ',
+    'cd', 'critical', 'dimension', 'focus', 'dose', 'power', 'pressure',
+    'temperature', '温度', 'flow', 'フロー', 'current', '電流', 'voltage', '電圧',
 ]
 
 
@@ -88,10 +101,15 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
     if pd.api.types.is_datetime64_any_dtype(series):
         return True
 
+    # Numeric dtype columns (e.g. UPTIME_PCT) are never dates
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+
     if any(kw in col_lower for kw in DATE_KEYWORDS):
         try:
-            pd.to_datetime(series.dropna().head(20), errors='raise')
-            return True
+            converted = pd.to_datetime(series.dropna().head(20), errors='coerce')
+            if converted.notna().sum() > 0 and converted.dropna().dt.year.between(1990, 2100).all():
+                return True
         except Exception:
             pass
 
@@ -100,8 +118,10 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
         if len(sample) == 0:
             return False
         try:
-            pd.to_datetime(sample, errors='raise')
-            return True
+            converted = pd.to_datetime(sample, errors='coerce')
+            valid = converted.dropna()
+            if len(valid) / len(sample) >= 0.8 and valid.dt.year.between(1990, 2100).all():
+                return True
         except Exception:
             pass
 

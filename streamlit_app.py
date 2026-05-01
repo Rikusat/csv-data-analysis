@@ -1,5 +1,5 @@
 """
-汎用CSV可視化ダッシュボード
+半導体工場 生産データ分析ダッシュボード
 Entry point — run with: streamlit run streamlit_app.py
 """
 
@@ -13,7 +13,9 @@ import streamlit as st
 from components.charts import (
     render_category_chart,
     render_correlation_heatmap,
+    render_pareto_chart,
     render_scatter_chart,
+    render_spc_chart,
     render_timeseries_chart,
 )
 from components.detect import detect_columns
@@ -22,8 +24,8 @@ from components.kpi import render_kpi_cards
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="CSV 可視化ダッシュボード",
-    page_icon="📊",
+    page_title="半導体工場 生産データ分析",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -59,35 +61,62 @@ st.markdown(
 )
 
 
-# ── Demo data ─────────────────────────────────────────────────
+# ── Demo data（半導体工場） ────────────────────────────────────
 @st.cache_data
 def _demo_data() -> pd.DataFrame:
-    """Generate 30-day manufacturing demo data (2 plants × 3 lines)."""
+    """
+    Generate 60-day semiconductor fab demo data.
+    4 processes × 2 equipment IDs, with realistic process variation
+    and a few intentional out-of-control events for SPC demonstration.
+    """
     np.random.seed(42)
-    dates = pd.date_range(end=datetime.today(), periods=30, freq='D')
-    plants = ['東工場', '西工場']
-    lines = ['LINE-A', 'LINE-B', 'LINE-C']
+    dates = pd.date_range(end=datetime.today(), periods=60, freq='D')
+    processes = ['リソグラフィ', 'エッチング', 'CVD', 'CMP']
+    equipment_map = {
+        'リソグラフィ': ['LITHO-01', 'LITHO-02'],
+        'エッチング':   ['ETCH-01',  'ETCH-02'],
+        'CVD':         ['CVD-01',   'CVD-02'],
+        'CMP':         ['CMP-01',   'CMP-02'],
+    }
+    # Baseline thickness per process (nm)
+    thickness_base = {
+        'リソグラフィ': 120, 'エッチング': 80, 'CVD': 500, 'CMP': 300,
+    }
 
     rows = []
     for d in dates:
-        for p in plants:
-            for ln in lines:
-                plan = int(np.random.randint(400, 600))
-                actual = int(plan * np.random.uniform(0.85, 1.05))
-                ng = int(actual * np.random.uniform(0.01, 0.06))
+        for proc in processes:
+            for eq in equipment_map[proc]:
+                wafer_in = int(np.random.randint(20, 26))
+                yield_rate = np.clip(np.random.normal(96.0, 1.5), 88, 100)
+                wafer_out = int(wafer_in * yield_rate / 100)
+                defect_density = np.clip(np.random.normal(0.35, 0.12), 0.05, 2.0)
+                thickness = np.random.normal(thickness_base[proc], thickness_base[proc] * 0.01)
+                uniformity = np.clip(np.random.normal(98.5, 0.8), 95, 100)
+                uptime = np.clip(np.random.normal(92.0, 4.0), 70, 100)
+                throughput = np.clip(np.random.normal(22.0, 2.0), 15, 30)
+
+                # Inject occasional out-of-control events (≈5% chance)
+                if np.random.random() < 0.05:
+                    defect_density *= np.random.uniform(3, 5)
+                    yield_rate -= np.random.uniform(5, 12)
+                    yield_rate = max(yield_rate, 70)
+
                 rows.append({
-                    'DATE': d.strftime('%Y-%m-%d'),
-                    'PLANT': p,
-                    'LINE': ln,
-                    'PLAN_QTY': plan,
-                    'ACTUAL_QTY': actual,
-                    'NG_QTY': ng,
+                    'DATE':              d.strftime('%Y-%m-%d'),
+                    'PROCESS':           proc,
+                    'EQUIPMENT_ID':      eq,
+                    'WAFER_IN':          wafer_in,
+                    'WAFER_OUT':         wafer_out,
+                    'YIELD_RATE':        round(yield_rate, 2),
+                    'DEFECT_DENSITY':    round(defect_density, 3),
+                    'THICKNESS_NM':      round(thickness, 1),
+                    'UNIFORMITY_PCT':    round(uniformity, 2),
+                    'UPTIME_PCT':        round(uptime, 1),
+                    'THROUGHPUT_WPH':    round(throughput, 1),
                 })
 
-    df = pd.DataFrame(rows)
-    df['達成率(%)'] = (df['ACTUAL_QTY'] / df['PLAN_QTY'] * 100).round(2)
-    df['不良率(%)'] = (df['NG_QTY'] / df['ACTUAL_QTY'] * 100).round(2)
-    return df
+    return pd.DataFrame(rows)
 
 
 # ── File loader ───────────────────────────────────────────────
@@ -120,7 +149,7 @@ def _to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ── Sidebar ───────────────────────────────────────────────────
 def _render_sidebar():
     """Render sidebar and return (df_raw, col_info, is_demo)."""
-    st.sidebar.title("📊 CSV ダッシュボード")
+    st.sidebar.title("🔬 半導体工場 分析")
     st.sidebar.markdown("---")
 
     uploaded = st.sidebar.file_uploader(
@@ -151,10 +180,10 @@ def _render_sidebar():
 
     with st.sidebar.expander("🔍 カラム判定結果", expanded=False):
         label_map = {
-            'date': '📅 日付',
+            'date':     '📅 日付',
             'category': '🏷️ カテゴリ',
-            'numeric': '🔢 数値',
-            'text': '📝 テキスト',
+            'numeric':  '🔢 数値',
+            'text':     '📝 テキスト',
         }
         for role, cols in col_info.items():
             if cols:
@@ -171,22 +200,28 @@ def _render_sidebar():
 # ── Tab renderers ─────────────────────────────────────────────
 
 def _tab_overview(df: pd.DataFrame, col_info: dict) -> None:
-    st.markdown('<p class="section-title">KPI サマリー</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">主要 KPI</p>', unsafe_allow_html=True)
 
     agg_method = st.selectbox(
-        "集計方法", ['合計', '平均', '最大', '最小'], key='kpi_agg'
+        "集計方法", ['平均', '合計', '最大', '最小'], key='kpi_agg'
     )
     date_col = col_info['date'][0] if col_info['date'] else None
     render_kpi_cards(df, col_info['numeric'], date_col=date_col, agg_method=agg_method)
 
     if col_info['date'] and col_info['numeric']:
-        st.markdown('<p class="section-title">時系列クイックビュー</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="section-title">歩留まり・欠陥トレンド（クイックビュー）</p>',
+            unsafe_allow_html=True,
+        )
         fig = render_timeseries_chart(df, col_info['date'][0], col_info['numeric'])
         if fig:
             st.plotly_chart(fig, use_container_width=True)
 
     if col_info['category'] and col_info['numeric']:
-        st.markdown('<p class="section-title">カテゴリ別クイックビュー</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="section-title">工程・装置別集計（クイックビュー）</p>',
+            unsafe_allow_html=True,
+        )
         fig = render_category_chart(df, col_info['category'][0], col_info['numeric'][0])
         if fig:
             st.plotly_chart(fig, use_container_width=True)
@@ -201,6 +236,10 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
         return
 
     date_col = col_info['date'][0]
+
+    # ── トレンドグラフ ────────────────────────────────────────
+    st.markdown('<p class="section-title">トレンドグラフ</p>', unsafe_allow_html=True)
+
     c1, c2 = st.columns(2)
     with c1:
         selected_metrics = st.multiselect(
@@ -214,17 +253,36 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
         sel = st.selectbox("グループ列", group_options, key='ts_group')
         group_col = None if sel == 'なし' else sel
 
-    st.markdown('<p class="section-title">時系列グラフ</p>', unsafe_allow_html=True)
-
     if not selected_metrics:
         st.warning("指標を1つ以上選択してください。")
-        return
-
-    fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.error("グラフを生成できませんでした。データを確認してください。")
+        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("グラフを生成できませんでした。データを確認してください。")
+
+    # ── SPC 管理図 ────────────────────────────────────────────
+    st.markdown('<p class="section-title">SPC 管理図（±3σ 制御限界）</p>', unsafe_allow_html=True)
+
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        spc_metric = st.selectbox(
+            "監視指標", col_info['numeric'], key='spc_metric'
+        )
+    with sc2:
+        spc_group_opts = ['なし'] + col_info['category']
+        spc_grp_sel = st.selectbox("グループ別", spc_group_opts, key='spc_group')
+        spc_group = None if spc_grp_sel == 'なし' else spc_grp_sel
+
+    fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
+    if fig_spc:
+        st.plotly_chart(fig_spc, use_container_width=True)
+    else:
+        st.error(
+            f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
+            "数値列を選択してください。"
+        )
 
 
 def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
@@ -235,19 +293,26 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
         st.info("数値列が検出されませんでした。")
         return
 
+    # ── 工程・装置別集計グラフ ────────────────────────────────
+    st.markdown(
+        '<p class="section-title">工程・装置別集計グラフ</p>', unsafe_allow_html=True
+    )
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         cat_col = st.selectbox("カテゴリ列", col_info['category'], key='cat_col')
     with c2:
         num_col = st.selectbox("数値列", col_info['numeric'], key='cat_num')
     with c3:
-        chart_type = st.selectbox("グラフ種別", ['棒グラフ', '積み上げ棒グラフ', '円グラフ'], key='cat_type')
+        chart_type = st.selectbox(
+            "グラフ種別", ['棒グラフ', '積み上げ棒グラフ', '円グラフ'], key='cat_type'
+        )
     with c4:
-        agg_method = st.selectbox("集計方法", ['合計', '平均', '最大', '最小'], key='cat_agg')
+        agg_method = st.selectbox(
+            "集計方法", ['平均', '合計', '最大', '最小'], key='cat_agg'
+        )
 
     top_n = st.slider("上位 N 件", min_value=3, max_value=30, value=10, key='cat_topn')
-
-    st.markdown('<p class="section-title">カテゴリ別集計グラフ</p>', unsafe_allow_html=True)
 
     fig = render_category_chart(df, cat_col, num_col, chart_type, agg_method, top_n)
     if fig:
@@ -256,6 +321,31 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
         st.error(
             f"「{num_col}」は数値でないため集計できません。別の列を選択してください。"
         )
+
+    # ── パレート図 ────────────────────────────────────────────
+    st.markdown('<p class="section-title">パレート図</p>', unsafe_allow_html=True)
+
+    pc1, pc2, pc3 = st.columns(3)
+    with pc1:
+        pareto_cat = st.selectbox(
+            "分類列（欠陥種別・装置など）", col_info['category'], key='pareto_cat'
+        )
+    with pc2:
+        pareto_num = st.selectbox(
+            "集計列", col_info['numeric'], key='pareto_num'
+        )
+    with pc3:
+        pareto_agg = st.selectbox(
+            "集計方法", ['合計', '平均', '最大', '最小'], key='pareto_agg'
+        )
+
+    pareto_n = st.slider("上位 N 件", min_value=3, max_value=20, value=10, key='pareto_topn')
+
+    fig_pareto = render_pareto_chart(df, pareto_cat, pareto_num, pareto_agg, pareto_n)
+    if fig_pareto:
+        st.plotly_chart(fig_pareto, use_container_width=True)
+    else:
+        st.error("パレート図を生成できませんでした。カテゴリ列と数値列を確認してください。")
 
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
@@ -285,7 +375,10 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
     if fig:
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown('<p class="section-title">相関ヒートマップ</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="section-title">プロセスパラメータ 相関ヒートマップ</p>',
+        unsafe_allow_html=True,
+    )
     fig_hm = render_correlation_heatmap(df, col_info['numeric'])
     if fig_hm:
         st.plotly_chart(fig_hm, use_container_width=True)
@@ -346,32 +439,34 @@ def _tab_data(df: pd.DataFrame) -> None:
 def main() -> None:
     df_raw, col_info, is_demo = _render_sidebar()
 
-    # Sidebar filters (rendered after column detection block)
     date_col = col_info['date'][0] if col_info['date'] else None
     date_range = render_date_filter(df_raw, date_col) if date_col else None
     cat_selections = render_category_filters(df_raw, col_info['category'])
 
     df = apply_filters(df_raw, cat_selections, date_range, date_col)
 
-    # Demo banner
     if is_demo:
         st.markdown(
             '<div class="demo-banner">'
-            '🔵 デモデータを表示中です。'
-            'サイドバーから CSV をアップロードすると実データで分析できます。'
+            '🔵 半導体工場サンプルデータを表示中です。'
+            'サイドバーから実データ CSV をアップロードすると切り替わります。'
             '</div>',
             unsafe_allow_html=True,
         )
 
-    # Large-data guard
     if len(df) > 100_000:
         st.warning(
             f"データが大きいため（{len(df):,} 行）、10 万行にサンプリングして表示します。"
         )
         df = df.sample(100_000, random_state=42).reset_index(drop=True)
 
-    # 5-tab layout
-    tabs = st.tabs(["📋 概要", "📈 時系列", "📊 カテゴリ分析", "🔗 相関分析", "🗂️ データ"])
+    tabs = st.tabs([
+        "📋 ダッシュボード",
+        "📈 トレンド・SPC",
+        "🏭 工程・装置分析",
+        "🔗 相関・多変量",
+        "🗂️ データ",
+    ])
 
     with tabs[0]:
         _tab_overview(df, col_info)

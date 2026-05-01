@@ -252,6 +252,164 @@ def render_correlation_heatmap(
         return None
 
 
+def render_spc_chart(
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    group_col: Optional[str] = None,
+) -> Optional[go.Figure]:
+    """
+    Generate an SPC (Statistical Process Control) chart.
+
+    Plots daily-averaged values with a center line (CL), upper and lower
+    control limits (UCL/LCL = mean ± 3σ).  Out-of-control points are
+    highlighted in red.
+
+    Args:
+        df: Filtered DataFrame.
+        date_col: Date column name.
+        value_col: Numeric column to monitor.
+        group_col: Optional column to draw one line per group.
+
+    Returns:
+        Plotly Figure or None on error.
+    """
+    try:
+        df_p = df.copy()
+        df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
+        df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
+        df_p = df_p.dropna(subset=[date_col, value_col])
+
+        if group_col and group_col in df_p.columns:
+            agg = df_p.groupby([date_col, group_col], as_index=False)[value_col].mean()
+        else:
+            agg = df_p.groupby(date_col, as_index=False)[value_col].mean()
+
+        agg = _downsample(agg)
+
+        mean_val = agg[value_col].mean()
+        std_val = agg[value_col].std()
+        ucl = mean_val + 3 * std_val
+        lcl = mean_val - 3 * std_val
+        agg['_oc'] = (agg[value_col] > ucl) | (agg[value_col] < lcl)
+
+        fig = go.Figure()
+
+        groups = agg[group_col].unique() if (group_col and group_col in agg.columns) else [None]
+        for i, grp in enumerate(groups):
+            sub = agg[agg[group_col] == grp] if grp is not None else agg
+            color = _COLORS[i % len(_COLORS)]
+            label = str(grp) if grp is not None else value_col
+
+            normal = sub[~sub['_oc']]
+            oc = sub[sub['_oc']]
+
+            fig.add_scatter(
+                x=normal[date_col], y=normal[value_col],
+                mode='lines+markers', name=label,
+                line=dict(color=color, width=2), marker=dict(size=5),
+            )
+            if not oc.empty:
+                fig.add_scatter(
+                    x=oc[date_col], y=oc[value_col],
+                    mode='markers', name=f'{label}（管理外）',
+                    marker=dict(color='#ef4444', size=10, symbol='x'),
+                )
+
+        fig.add_hline(y=mean_val, line_color='#10b981', line_dash='solid',
+                      annotation_text=f'CL={mean_val:.3f}',
+                      annotation_position='top right')
+        fig.add_hline(y=ucl, line_color='#ef4444', line_dash='dash',
+                      annotation_text=f'UCL={ucl:.3f}',
+                      annotation_position='top right')
+        if lcl > 0:
+            fig.add_hline(y=lcl, line_color='#ef4444', line_dash='dash',
+                          annotation_text=f'LCL={lcl:.3f}',
+                          annotation_position='bottom right')
+
+        fig.update_layout(
+            title=f'SPC 管理図: {value_col}',
+            template='plotly_white',
+            hovermode='x unified',
+            height=420,
+            margin=dict(l=20, r=140, t=50, b=20),
+        )
+        return fig
+    except Exception:
+        return None
+
+
+def render_pareto_chart(
+    df: pd.DataFrame,
+    category_col: str,
+    value_col: str,
+    agg_method: str = '合計',
+    top_n: int = 10,
+) -> Optional[go.Figure]:
+    """
+    Generate a Pareto chart (sorted bar + cumulative percentage line).
+
+    Args:
+        df: Filtered DataFrame.
+        category_col: Column to group by (e.g. defect type).
+        value_col: Numeric column to aggregate.
+        agg_method: '合計' | '平均' | '最大' | '最小'
+        top_n: Show only the top-N categories.
+
+    Returns:
+        Plotly Figure or None on error.
+    """
+    try:
+        _agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
+        agg_func = _agg_map.get(agg_method, 'sum')
+
+        df_p = df.copy()
+        df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
+
+        grouped = (
+            df_p.groupby(category_col)[value_col]
+            .agg(agg_func)
+            .reset_index()
+            .sort_values(value_col, ascending=False)
+            .head(top_n)
+        )
+        total = grouped[value_col].sum()
+        grouped['_cum_pct'] = (grouped[value_col].cumsum() / total * 100).round(1)
+
+        fig = go.Figure()
+        fig.add_bar(
+            x=grouped[category_col], y=grouped[value_col],
+            name=f'{value_col}（{agg_method}）',
+            marker_color=_ACCENT,
+            yaxis='y',
+        )
+        fig.add_scatter(
+            x=grouped[category_col], y=grouped['_cum_pct'],
+            name='累積割合(%)', mode='lines+markers',
+            line=dict(color='#f59e0b', width=2),
+            marker=dict(size=7),
+            yaxis='y2',
+        )
+        fig.add_hline(
+            y=80, line_dash='dot', line_color='#9ca3af',
+            annotation_text='80%', yref='y2',
+        )
+        fig.update_layout(
+            title=f'パレート図: {category_col} × {value_col}',
+            template='plotly_white',
+            yaxis=dict(title=f'{value_col}（{agg_method}）'),
+            yaxis2=dict(
+                title='累積割合(%)', overlaying='y', side='right',
+                range=[0, 110], ticksuffix='%',
+            ),
+            height=420,
+            margin=dict(l=20, r=60, t=50, b=20),
+        )
+        return fig
+    except Exception:
+        return None
+
+
 # ── Private helpers ──────────────────────────────────────────
 
 
