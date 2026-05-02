@@ -7,7 +7,7 @@ from typing import Dict, List
 DATE_KEYWORDS = [
     'date', '日付', 'month', '年', '月', 'time', 'datetime',
     '日時', '期間', 'week', '週', 'day', '日',
-    'timestamp', 'ts', '作成日', '更新日', '登録日', '発生日', '年月',
+    'timestamp', '作成日', '更新日', '登録日', '発生日', '年月',
 ]
 CATEGORY_KEYWORDS = [
     # 汎用
