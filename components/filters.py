@@ -26,6 +26,10 @@ def render_category_filters(
     for col in category_cols[:max_filters]:
         try:
             unique_vals = sorted(df[col].dropna().unique().tolist(), key=str)
+            try:
+                unique_vals = sorted(unique_vals, key=float)
+            except (ValueError, TypeError):
+                pass
             options = ['すべて'] + [str(v) for v in unique_vals]
             selected = st.sidebar.selectbox(
                 label=f"🏷️ {col}",
