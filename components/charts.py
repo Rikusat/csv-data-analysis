@@ -384,12 +384,11 @@ def render_spc_chart(
                     annotation_text=f'UCL={grp_ucl:.3f}{suffix}',
                     annotation_position='top right',
                 )
-                if grp_lcl > 0:
-                    fig.add_hline(
-                        y=grp_lcl, line_color=ref_color, line_dash='dash', line_width=1,
-                        annotation_text=f'LCL={grp_lcl:.3f}{suffix}',
-                        annotation_position='bottom right',
-                    )
+                fig.add_hline(
+                    y=grp_lcl, line_color=ref_color, line_dash='dash', line_width=1,
+                    annotation_text=f'LCL={grp_lcl:.3f}{suffix}',
+                    annotation_position='bottom right',
+                )
 
         title_suffix = '（グループ別制御限界）' if len(groups) > 1 else ''
         fig.update_layout(
