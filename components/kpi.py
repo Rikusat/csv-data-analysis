@@ -104,6 +104,8 @@ def _render_card(
 
 
 def _aggregate(series: pd.Series, method: str) -> float:
+    if series.empty:
+        return float('nan')
     mapping = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
     return float(getattr(series, mapping.get(method, 'sum'))())
 
