@@ -36,6 +36,11 @@ def render_category_filters(
         except Exception:
             selections[col] = None
 
+    hidden = len(category_cols) - max_filters
+    if hidden > 0:
+        hidden_names = ', '.join(f'`{c}`' for c in category_cols[max_filters:])
+        st.sidebar.caption(f"他 {hidden} 件のカテゴリ列はフィルター対象外です: {hidden_names}")
+
     return selections
 
 
