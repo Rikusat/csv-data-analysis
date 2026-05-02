@@ -162,7 +162,8 @@ def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             seen[c] = 1
             clean.append(c)
     df.columns = clean
-    for col in df.select_dtypes(include='object').columns:
+    # include both legacy object dtype and pandas 3.x StringDtype
+    for col in df.select_dtypes(include=['object', 'string']).columns:
         df[col] = _try_parse_numeric(df[col])
     return df
 
