@@ -5,7 +5,6 @@ Entry point — run with: streamlit run streamlit_app.py
 
 import csv
 import io
-import re
 from datetime import datetime
 
 import numpy as np
