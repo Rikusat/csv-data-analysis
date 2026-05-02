@@ -20,6 +20,7 @@ def render_timeseries_chart(
     group_col: Optional[str] = None,
     selected_metrics: Optional[List[str]] = None,
     agg_method: str = 'mean',
+    freq: Optional[str] = None,
 ) -> Optional[go.Figure]:
     """
     Generate a time-series line chart.
@@ -31,6 +32,7 @@ def render_timeseries_chart(
         group_col: Optional column to split lines by colour.
         selected_metrics: Subset of numeric_cols to plot; defaults to first 3.
         agg_method: pandas aggregation string ('mean', 'sum', 'max', 'min').
+        freq: Optional pandas resample frequency ('D', 'W', 'ME', 'YE').
 
     Returns:
         Plotly Figure or None on error.
@@ -45,10 +47,19 @@ def render_timeseries_chart(
             return None
 
         title_metrics = ', '.join(metrics[:3]) + (f' 他{len(metrics)-3}件' if len(metrics) > 3 else '')
+        agg_dict = {m: agg_method for m in metrics}
+        _FREQ_LABELS = {'D': '日次', 'W': '週次', 'ME': '月次', 'YE': '年次'}
+        freq_suffix = f'（{_FREQ_LABELS[freq]}）' if freq and freq in _FREQ_LABELS else ''
 
         if group_col and group_col in df_p.columns:
-            agg_dict = {m: agg_method for m in metrics}
-            df_g = df_p.groupby([date_col, group_col], as_index=False).agg(agg_dict)
+            if freq:
+                df_g = (
+                    df_p.groupby([pd.Grouper(key=date_col, freq=freq), group_col])
+                    .agg(agg_dict).reset_index()
+                    .dropna(subset=metrics, how='all')
+                )
+            else:
+                df_g = df_p.groupby([date_col, group_col], as_index=False).agg(agg_dict)
 
             groups = sorted(df_g[group_col].dropna().unique(), key=str)
             group_colors = {grp: _COLORS[i % len(_COLORS)] for i, grp in enumerate(groups)}
@@ -67,11 +78,17 @@ def render_timeseries_chart(
                         marker=dict(size=4),
                         legendgroup=str(grp),
                     )
-            fig.update_layout(title=f"時系列推移: {title_metrics}", template='plotly_white')
+            fig.update_layout(title=f"時系列推移: {title_metrics}{freq_suffix}", template='plotly_white')
 
         else:
-            agg_dict = {m: agg_method for m in metrics}
-            df_g = df_p.groupby(date_col, as_index=False).agg(agg_dict)
+            if freq:
+                df_g = (
+                    df_p.groupby(pd.Grouper(key=date_col, freq=freq))
+                    .agg(agg_dict).reset_index()
+                    .dropna(subset=metrics, how='all')
+                )
+            else:
+                df_g = df_p.groupby(date_col, as_index=False).agg(agg_dict)
             df_g = _downsample(df_g)
 
             fig = go.Figure()
@@ -82,7 +99,7 @@ def render_timeseries_chart(
                     line=dict(color=_COLORS[i % len(_COLORS)], width=2),
                     marker=dict(size=4),
                 )
-            fig.update_layout(title=f"時系列推移: {title_metrics}", template='plotly_white')
+            fig.update_layout(title=f"時系列推移: {title_metrics}{freq_suffix}", template='plotly_white')
 
         fig.update_layout(
             xaxis_title=date_col,
@@ -501,6 +518,89 @@ def render_pareto_chart(
             ),
             height=420,
             margin=dict(l=20, r=80, t=50, b=20),
+        )
+        return fig
+    except Exception:
+        return None
+
+
+def render_period_bar_chart(
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    freq: str = 'ME',
+    agg_method: str = '合計',
+    group_col: Optional[str] = None,
+) -> Optional[go.Figure]:
+    """
+    Generate a bar chart with values aggregated by time period.
+
+    Args:
+        df: Filtered DataFrame.
+        date_col: Date column name.
+        value_col: Numeric column to aggregate.
+        freq: Pandas resample frequency ('D', 'W', 'ME', 'YE').
+        agg_method: '合計' | '平均' | '最大' | '最小'
+        group_col: Optional column to split bars by colour.
+
+    Returns:
+        Plotly Figure or None on error.
+    """
+    try:
+        _agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
+        agg_func = _agg_map.get(agg_method, 'sum')
+        _FREQ_LABELS = {'D': '日次', 'W': '週次', 'ME': '月次', 'YE': '年次'}
+        _TICK_FMT = {'D': '%Y/%m/%d', 'W': '%Y-W%W', 'ME': '%Y/%m', 'YE': '%Y'}
+        freq_label = _FREQ_LABELS.get(freq, freq)
+
+        df_p = df.copy()
+        df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
+        df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
+        df_p = df_p.dropna(subset=[date_col, value_col])
+        if df_p.empty:
+            return None
+
+        title = f'{freq_label}集計: {value_col}（{agg_method}）'
+        fmt = _TICK_FMT.get(freq, '%Y/%m/%d')
+
+        if group_col and group_col in df_p.columns:
+            df_g = (
+                df_p.groupby([pd.Grouper(key=date_col, freq=freq), group_col])
+                [value_col].agg(agg_func)
+                .reset_index()
+                .dropna(subset=[value_col])
+            )
+            if df_g.empty:
+                return None
+            df_g['_period'] = df_g[date_col].dt.strftime(fmt)
+            fig = px.bar(
+                df_g, x='_period', y=value_col, color=group_col,
+                barmode='group', title=title,
+                template='plotly_white', color_discrete_sequence=_COLORS,
+                labels={'_period': freq_label},
+            )
+        else:
+            df_g = (
+                df_p.groupby(pd.Grouper(key=date_col, freq=freq))
+                [value_col].agg(agg_func)
+                .reset_index()
+                .dropna(subset=[value_col])
+            )
+            if df_g.empty:
+                return None
+            df_g['_period'] = df_g[date_col].dt.strftime(fmt)
+            fig = px.bar(
+                df_g, x='_period', y=value_col,
+                title=title, template='plotly_white',
+                color_discrete_sequence=[_ACCENT], text_auto=True,
+                labels={'_period': freq_label},
+            )
+
+        fig.update_layout(
+            xaxis_title=freq_label,
+            yaxis_title=f'{value_col}（{agg_method}）',
+            height=420,
+            margin=dict(l=20, r=20, t=50, b=20),
         )
         return fig
     except Exception:

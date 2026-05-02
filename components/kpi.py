@@ -18,6 +18,7 @@ def render_kpi_cards(
     date_col: Optional[str] = None,
     agg_method: str = '合計',
     max_cards: int = 5,
+    freq: str = 'D',
 ) -> None:
     """
     Render a row of KPI metric cards.
@@ -49,7 +50,8 @@ def render_kpi_cards(
                 series = pd.to_numeric(df[col], errors='coerce').dropna()
                 value = _aggregate(series, agg_method)
                 delta = _day_over_day_delta(df, col, date_col, agg_method)
-                _render_card(col, value, delta, agg_method)
+                delta_label = _FREQ_LABEL.get(freq, '前期比')
+                _render_card(col, value, delta, agg_method, delta_label)
             except Exception:
                 st.markdown(
                     f'<div style="{_CARD_CSS}">'
@@ -61,6 +63,9 @@ def render_kpi_cards(
 
 
 # ── Private helpers ──────────────────────────────────────────
+
+
+_FREQ_LABEL = {'D': '前日比', 'W': '前週比', 'ME': '前月比', 'YE': '前年比'}
 
 
 _LOWER_IS_BETTER_KEYWORDS = [
@@ -80,6 +85,7 @@ def _render_card(
     value: float,
     delta: Optional[float],
     agg_method: str,
+    delta_label: str = '前期比',
 ) -> None:
     delta_html = ""
     if delta is not None:
@@ -89,7 +95,7 @@ def _render_card(
         arrow = "▲" if delta >= 0 else "▼"
         delta_html = (
             f'<p style="color:{color};font-size:12px;margin:4px 0 0 0;">'
-            f'{arrow} {_fmt(abs(delta))} (前期比)</p>'
+            f'{arrow} {_fmt(abs(delta))} ({delta_label})</p>'
         )
 
     st.markdown(

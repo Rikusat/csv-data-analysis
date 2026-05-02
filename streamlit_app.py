@@ -15,6 +15,7 @@ from components.charts import (
     render_category_chart,
     render_correlation_heatmap,
     render_pareto_chart,
+    render_period_bar_chart,
     render_scatter_chart,
     render_spc_chart,
     render_timeseries_chart,
@@ -60,6 +61,9 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+_FREQ_OPTIONS = {'日次': 'D', '週次': 'W', '月次': 'ME', '年次': 'YE'}
 
 
 # ── Demo data（半導体工場） ────────────────────────────────────
@@ -278,6 +282,16 @@ def _render_sidebar():
                     st.markdown(f"- `{c}`")
 
     st.sidebar.markdown("---")
+    st.sidebar.markdown("### 集計粒度")
+    freq_sel = st.sidebar.selectbox(
+        "時間粒度",
+        list(_FREQ_OPTIONS.keys()),
+        key='global_freq',
+        help="トレンドグラフ・期間集計バーチャート・KPI前期比に適用されます",
+    )
+    freq = _FREQ_OPTIONS[freq_sel]
+
+    st.sidebar.markdown("---")
     st.sidebar.markdown("### フィルター")
     if st.sidebar.button("🔄 フィルターをリセット", key="reset_filters"):
         for col in col_info['category']:
@@ -288,19 +302,19 @@ def _render_sidebar():
             del st.session_state["filter_date_range"]
         st.rerun()
 
-    return df_raw, col_info, is_demo
+    return df_raw, col_info, is_demo, freq
 
 
 # ── Tab renderers ─────────────────────────────────────────────
 
-def _tab_overview(df: pd.DataFrame, col_info: dict) -> None:
+def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     st.markdown('<p class="section-title">主要 KPI</p>', unsafe_allow_html=True)
 
     agg_method = st.selectbox(
         "集計方法", ['平均', '合計', '最大', '最小'], key='kpi_agg'
     )
     date_col = col_info['date'][0] if col_info['date'] else None
-    render_kpi_cards(df, col_info['numeric'], date_col=date_col, agg_method=agg_method)
+    render_kpi_cards(df, col_info['numeric'], date_col=date_col, agg_method=agg_method, freq=freq)
 
     if col_info['date'] and col_info['numeric']:
         st.markdown(
@@ -325,7 +339,7 @@ def _tab_overview(df: pd.DataFrame, col_info: dict) -> None:
             st.plotly_chart(fig, use_container_width=True)
 
 
-def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
+def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     if not col_info['date']:
         st.info("日付列が検出されませんでした。CSVに日付列を含めてください。")
         return
@@ -357,7 +371,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
     if not selected_metrics:
         st.warning("指標を1つ以上選択してください。")
     else:
-        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en)
+        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -384,6 +398,28 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
         st.error(
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
             "数値列を選択してください。"
+        )
+
+    # ── 期間集計バーチャート ──────────────────────────────────
+    st.markdown('<p class="section-title">期間集計バーチャート</p>', unsafe_allow_html=True)
+
+    pb1, pb2, pb3 = st.columns(3)
+    with pb1:
+        pb_metric = st.selectbox("集計指標", col_info['numeric'], key='pb_metric')
+    with pb2:
+        pb_group_opts = ['なし'] + col_info['category']
+        pb_grp_sel = st.selectbox("グループ列", pb_group_opts, key='pb_group')
+        pb_group = None if pb_grp_sel == 'なし' else pb_grp_sel
+    with pb3:
+        pb_agg = st.selectbox("集計方法", ['合計', '平均', '最大', '最小'], key='pb_agg')
+
+    fig_pb = render_period_bar_chart(df, date_col, pb_metric, freq, pb_agg, pb_group)
+    if fig_pb:
+        st.plotly_chart(fig_pb, use_container_width=True)
+    else:
+        st.error(
+            f"「{pb_metric}」の期間集計バーチャートを生成できませんでした。"
+            "日付列と数値列を確認してください。"
         )
 
 
@@ -540,7 +576,7 @@ def _tab_data(df: pd.DataFrame) -> None:
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
-    df_raw, col_info, is_demo = _render_sidebar()
+    df_raw, col_info, is_demo, freq = _render_sidebar()
 
     date_col = col_info['date'][0] if col_info['date'] else None
     date_range = render_date_filter(df_raw, date_col) if date_col else None
@@ -574,9 +610,9 @@ def main() -> None:
     ])
 
     with tabs[0]:
-        _tab_overview(df, col_info)
+        _tab_overview(df, col_info, freq)
     with tabs[1]:
-        _tab_timeseries(df, col_info)
+        _tab_timeseries(df, col_info, freq)
     with tabs[2]:
         _tab_category(df, col_info)
     with tabs[3]:
