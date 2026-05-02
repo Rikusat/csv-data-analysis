@@ -138,8 +138,12 @@ def _day_over_day_delta(
         if tmp.empty:
             return None
 
-        latest = tmp['_d'].max().normalize()  # floor to midnight so date-level comparison works
-        prev = latest - pd.Timedelta(days=1)
+        # Use the two most recent distinct dates — works for any granularity
+        sorted_dates = sorted(tmp['_d'].dt.normalize().unique())
+        if len(sorted_dates) < 2:
+            return None
+        latest = sorted_dates[-1]
+        prev   = sorted_dates[-2]
 
         today_s = pd.to_numeric(tmp.loc[tmp['_d'].dt.normalize() == latest, col], errors='coerce').dropna()
         prev_s  = pd.to_numeric(tmp.loc[tmp['_d'].dt.normalize() == prev,   col], errors='coerce').dropna()
