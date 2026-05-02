@@ -89,7 +89,7 @@ def _render_card(
         arrow = "▲" if delta >= 0 else "▼"
         delta_html = (
             f'<p style="color:{color};font-size:12px;margin:4px 0 0 0;">'
-            f'{arrow} {_fmt(abs(delta))} (前日比)</p>'
+            f'{arrow} {_fmt(abs(delta))} (前期比)</p>'
         )
 
     st.markdown(
