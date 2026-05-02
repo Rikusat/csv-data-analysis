@@ -427,8 +427,12 @@ def render_pareto_chart(
             df_p.groupby(category_col)[value_col]
             .agg(agg_func)
             .reset_index()
+            .dropna(subset=[value_col])   # drop categories where aggregation yielded NaN
         )
-        total = float(pd.to_numeric(grouped_all[value_col], errors='coerce').sum())
+        grouped_all[value_col] = pd.to_numeric(grouped_all[value_col], errors='coerce')
+        grouped_all = grouped_all.dropna(subset=[value_col])
+
+        total = float(grouped_all[value_col].sum())
         if total == 0 or not np.isfinite(total):
             return None
 
