@@ -220,7 +220,7 @@ def _detect_columns(df: pd.DataFrame) -> dict:
 # ── Export helpers ────────────────────────────────────────────
 @st.cache_data
 def _to_csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+    return df.to_csv(index=False).encode('utf-8-sig')
 
 
 @st.cache_data
@@ -233,7 +233,7 @@ def _to_excel_bytes(df: pd.DataFrame) -> bytes:
 
 # ── Sidebar ───────────────────────────────────────────────────
 def _render_sidebar():
-    """Render sidebar and return (df_raw, col_info, is_demo)."""
+    """Render sidebar and return (df_raw, col_info, is_demo, freq)."""
     st.sidebar.title("🔬 半導体工場 分析")
     st.sidebar.markdown("---")
 
@@ -324,7 +324,7 @@ def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         quick_metrics = col_info['numeric'][:2]
         fig = render_timeseries_chart(
             df, col_info['date'][0], col_info['numeric'],
-            selected_metrics=quick_metrics,
+            selected_metrics=quick_metrics, freq=freq,
         )
         if fig:
             st.plotly_chart(fig, use_container_width=True)

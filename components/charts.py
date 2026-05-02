@@ -11,6 +11,9 @@ _ACCENT = '#2563EB'
 _COLORS = px.colors.qualitative.Set2
 _MAX_POINTS = 1000
 _LINE_DASHES = ['solid', 'dot', 'dash', 'dashdot']
+_AGG_MAP = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
+_FREQ_LABELS = {'D': '日次', 'W': '週次', 'ME': '月次', 'YE': '年次'}
+_PERIOD_FMT = {'D': '%Y/%m/%d', 'W': '%Y-W%W', 'ME': '%Y/%m', 'YE': '%Y'}
 
 
 def render_timeseries_chart(
@@ -48,7 +51,6 @@ def render_timeseries_chart(
 
         title_metrics = ', '.join(metrics[:3]) + (f' 他{len(metrics)-3}件' if len(metrics) > 3 else '')
         agg_dict = {m: agg_method for m in metrics}
-        _FREQ_LABELS = {'D': '日次', 'W': '週次', 'ME': '月次', 'YE': '年次'}
         freq_suffix = f'（{_FREQ_LABELS[freq]}）' if freq and freq in _FREQ_LABELS else ''
 
         if group_col and group_col in df_p.columns:
@@ -136,8 +138,7 @@ def render_category_chart(
         Plotly Figure or None on error.
     """
     try:
-        _agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
-        agg_func = _agg_map.get(agg_method, 'sum')
+        agg_func = _AGG_MAP.get(agg_method, 'sum')
 
         df_p = df.copy()
         df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
@@ -145,9 +146,12 @@ def render_category_chart(
             df_p.groupby(category_col)[value_col]
             .agg(agg_func)
             .reset_index()
+            .dropna(subset=[value_col])
             .sort_values(value_col, ascending=False)
             .head(top_n)
         )
+        if grouped.empty:
+            return None
 
         title = f"{category_col} 別 {value_col}（{agg_method}）"
 
@@ -453,8 +457,7 @@ def render_pareto_chart(
         Plotly Figure or None on error.
     """
     try:
-        _agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
-        agg_func = _agg_map.get(agg_method, 'sum')
+        agg_func = _AGG_MAP.get(agg_method, 'sum')
 
         df_p = df.copy()
         df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
@@ -547,11 +550,9 @@ def render_period_bar_chart(
         Plotly Figure or None on error.
     """
     try:
-        _agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
-        agg_func = _agg_map.get(agg_method, 'sum')
-        _FREQ_LABELS = {'D': '日次', 'W': '週次', 'ME': '月次', 'YE': '年次'}
-        _TICK_FMT = {'D': '%Y/%m/%d', 'W': '%Y-W%W', 'ME': '%Y/%m', 'YE': '%Y'}
+        agg_func = _AGG_MAP.get(agg_method, 'sum')
         freq_label = _FREQ_LABELS.get(freq, freq)
+        fmt = _PERIOD_FMT.get(freq, '%Y/%m/%d')
 
         df_p = df.copy()
         df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
@@ -561,7 +562,6 @@ def render_period_bar_chart(
             return None
 
         title = f'{freq_label}集計: {value_col}（{agg_method}）'
-        fmt = _TICK_FMT.get(freq, '%Y/%m/%d')
 
         if group_col and group_col in df_p.columns:
             df_g = (
