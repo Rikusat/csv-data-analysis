@@ -141,13 +141,22 @@ def render_category_chart(
                 template='plotly_white',
             )
         elif chart_type == '積み上げ棒グラフ':
-            fig = px.bar(
-                grouped, x=category_col, y=value_col,
-                title=title, color=category_col,
-                color_discrete_sequence=_COLORS,
-                template='plotly_white',
-            )
-            fig.update_layout(barmode='stack')
+            if grouped[category_col].nunique() <= 1:
+                fig = px.bar(
+                    grouped, x=category_col, y=value_col,
+                    title=title + '（カテゴリが1種類のため棒グラフで表示）',
+                    color_discrete_sequence=_COLORS,
+                    template='plotly_white',
+                    text_auto=True,
+                )
+            else:
+                fig = px.bar(
+                    grouped, x=category_col, y=value_col,
+                    title=title, color=category_col,
+                    color_discrete_sequence=_COLORS,
+                    template='plotly_white',
+                )
+                fig.update_layout(barmode='stack')
         else:
             fig = px.bar(
                 grouped, x=category_col, y=value_col,
