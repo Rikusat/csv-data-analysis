@@ -3,7 +3,9 @@
 Entry point — run with: streamlit run streamlit_app.py
 """
 
+import csv
 import io
+import re
 from datetime import datetime
 
 import numpy as np
@@ -119,18 +121,90 @@ def _demo_data() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── File loader ───────────────────────────────────────────────
+# ── File loader helpers ───────────────────────────────────────
+
+def _strip_numeric_fmt(s: pd.Series) -> pd.Series:
+    """Strip currency prefixes, thousands commas, and percent suffixes."""
+    return (
+        s.str.strip()
+         .str.replace(r'^[¥$€£]\s*', '', regex=True)
+         .str.replace(r'[,，]', '', regex=True)
+         .str.replace(r'%\s*$', '', regex=True)
+    )
+
+
+def _try_parse_numeric(series: pd.Series) -> pd.Series:
+    """Return numeric series if ≥80 % of non-null values parse as numbers (after cleanup)."""
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return series
+    direct = pd.to_numeric(non_null, errors='coerce')
+    if direct.notna().sum() / len(non_null) >= 0.8:
+        return pd.to_numeric(series, errors='coerce')
+    cleaned = _strip_numeric_fmt(non_null.astype(str))
+    if pd.to_numeric(cleaned, errors='coerce').notna().sum() / len(non_null) >= 0.8:
+        return pd.to_numeric(_strip_numeric_fmt(series.astype(str)), errors='coerce')
+    return series
+
+
+def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean column names and convert formatted numeric strings to float in place."""
+    df = df.copy()
+    # Strip whitespace and BOM, deduplicate names
+    cols = [str(c).strip().lstrip('﻿') for c in df.columns]
+    seen: dict = {}
+    clean: list = []
+    for c in cols:
+        if c in seen:
+            seen[c] += 1
+            clean.append(f'{c}_{seen[c]}')
+        else:
+            seen[c] = 1
+            clean.append(c)
+    df.columns = clean
+    for col in df.select_dtypes(include='object').columns:
+        df[col] = _try_parse_numeric(df[col])
+    return df
+
+
 @st.cache_data
-def _load_csv(file_bytes: bytes, _filename: str) -> pd.DataFrame:
-    """Load CSV with automatic encoding detection (UTF-8 / Shift-JIS / CP932)."""
+def _load_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Load CSV or Excel. Auto-detects encoding and delimiter. Returns clean DataFrame."""
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'csv'
+
+    if ext in ('xlsx', 'xls'):
+        try:
+            df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
+            return _normalize_dataframe(df)
+        except Exception as exc:
+            raise ValueError(f"Excelファイルの読み込みに失敗しました: {exc}") from exc
+
+    # CSV: try encodings, sniff delimiter
     for enc in ('utf-8', 'utf-8-sig', 'shift-jis', 'cp932'):
         try:
-            return pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+            raw = file_bytes[:8192].decode(enc, errors='ignore')
+            try:
+                dialect = csv.Sniffer().sniff(raw, delimiters=',\t;|')
+                sep = dialect.delimiter
+            except csv.Error:
+                sep = ','
+            df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=sep)
+            # If only 1 column detected with ',', retry with other separators
+            if df.shape[1] <= 1:
+                for alt in ('\t', ';', '|'):
+                    try:
+                        df2 = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=alt)
+                        if df2.shape[1] > df.shape[1]:
+                            df = df2
+                    except Exception:
+                        pass
+            return _normalize_dataframe(df)
         except Exception:
             continue
+
     raise ValueError(
         "ファイルの読み込みに失敗しました。"
-        "UTF-8 / Shift-JIS / CP932 のいずれかで保存されたCSVを使用してください。"
+        "UTF-8 / Shift-JIS / CP932 のいずれかで保存されたファイルを使用してください。"
     )
 
 
@@ -155,9 +229,9 @@ def _render_sidebar():
     st.sidebar.markdown("---")
 
     uploaded = st.sidebar.file_uploader(
-        "CSVファイルをアップロード",
-        type=['csv'],
-        help="UTF-8 / Shift-JIS / CP932 対応",
+        "CSV / Excel をアップロード",
+        type=['csv', 'xlsx'],
+        help="CSV（UTF-8 / Shift-JIS / CP932 / タブ・セミコロン区切り）または Excel（.xlsx）対応",
     )
 
     is_demo = uploaded is None
@@ -167,7 +241,7 @@ def _render_sidebar():
     else:
         with st.spinner("ファイルを読み込み中..."):
             try:
-                df_raw = _load_csv(uploaded.read(), uploaded.name)
+                df_raw = _load_file(uploaded.read(), uploaded.name)
             except ValueError as exc:
                 st.sidebar.error(str(exc))
                 df_raw = _demo_data()
@@ -201,7 +275,7 @@ def _render_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### フィルター")
     if st.sidebar.button("🔄 フィルターをリセット", key="reset_filters"):
-        for col in col_info['category'][:3]:
+        for col in col_info['category']:
             k = f"filter_cat_{col}"
             if k in st.session_state:
                 st.session_state[k] = 'すべて'
@@ -300,7 +374,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict) -> None:
     fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
     if fig_spc:
         st.plotly_chart(fig_spc, use_container_width=True)
-        st.caption("🔴 赤×印: 中心値 ± 3σ を超えた管理外点。工程異常の可能性があります。CL=中心線, UCL/LCL=上下管理限界。")
+        st.caption("🔴 赤×印: 中心値 ± 3σ を超えた管理外点。工程異常の可能性があります。CL=中心線, UCL/LCL=上下管理限界。グループ指定時は各グループで独立した制御限界を適用しています。")
     else:
         st.error(
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"

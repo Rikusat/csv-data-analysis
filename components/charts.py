@@ -293,34 +293,41 @@ def render_spc_chart(
         df_p = df_p.dropna(subset=[date_col, value_col])
 
         if group_col and group_col in df_p.columns:
-            agg = df_p.groupby([date_col, group_col], as_index=False)[value_col].mean()
+            agg_full = df_p.groupby([date_col, group_col], as_index=False)[value_col].mean()
         else:
-            agg = df_p.groupby(date_col, as_index=False)[value_col].mean()
+            agg_full = df_p.groupby(date_col, as_index=False)[value_col].mean()
 
-        if agg.empty or agg[value_col].isna().all():
+        if agg_full.empty or agg_full[value_col].isna().all():
             return None
 
-        # Compute control limits on the full aggregated data (before downsampling)
-        mean_val = float(agg[value_col].mean())
-        std_val = float(agg[value_col].std())
-
-        # If std is 0 or NaN, use a small epsilon so limits are visible
-        if not np.isfinite(std_val) or std_val == 0:
-            std_val = abs(mean_val) * 0.001 if mean_val != 0 else 0.001
-
-        ucl = mean_val + 3 * std_val
-        lcl = mean_val - 3 * std_val
-        agg['_oc'] = (agg[value_col] > ucl) | (agg[value_col] < lcl)
-
-        agg = _downsample(agg)
+        groups = (
+            sorted(agg_full[group_col].dropna().unique(), key=str)
+            if (group_col and group_col in agg_full.columns)
+            else [None]
+        )
+        # Only draw horizontal reference lines when ≤3 groups (otherwise too cluttered)
+        draw_ref_lines = len(groups) <= 3
 
         fig = go.Figure()
 
-        groups = agg[group_col].unique() if (group_col and group_col in agg.columns) else [None]
         for i, grp in enumerate(groups):
-            sub = agg[agg[group_col] == grp] if grp is not None else agg
+            sub = (
+                agg_full[agg_full[group_col] == grp].copy()
+                if grp is not None else agg_full.copy()
+            )
             color = _COLORS[i % len(_COLORS)]
             label = str(grp) if grp is not None else value_col
+
+            # Per-group control limits — computed on full data before downsampling
+            grp_mean = float(sub[value_col].mean())
+            grp_std = float(sub[value_col].std())
+            if not np.isfinite(grp_std) or grp_std == 0:
+                grp_std = abs(grp_mean) * 0.001 if grp_mean != 0 else 0.001
+            grp_ucl = grp_mean + 3 * grp_std
+            grp_lcl = grp_mean - 3 * grp_std
+
+            sub['_oc'] = (sub[value_col] > grp_ucl) | (sub[value_col] < grp_lcl)
+            sub = _downsample(sub)
 
             normal = sub[~sub['_oc']]
             oc = sub[sub['_oc']]
@@ -337,19 +344,29 @@ def render_spc_chart(
                     marker=dict(color='#ef4444', size=10, symbol='x'),
                 )
 
-        fig.add_hline(y=mean_val, line_color='#10b981', line_dash='solid',
-                      annotation_text=f'CL={mean_val:.3f}',
-                      annotation_position='top right')
-        fig.add_hline(y=ucl, line_color='#ef4444', line_dash='dash',
-                      annotation_text=f'UCL={ucl:.3f}',
-                      annotation_position='top right')
-        if lcl > 0:
-            fig.add_hline(y=lcl, line_color='#ef4444', line_dash='dash',
-                          annotation_text=f'LCL={lcl:.3f}',
-                          annotation_position='bottom right')
+            if draw_ref_lines:
+                ref_color = color if grp is not None else '#10b981'
+                suffix = f' [{grp}]' if grp is not None else ''
+                fig.add_hline(
+                    y=grp_mean, line_color=ref_color, line_dash='solid', line_width=1,
+                    annotation_text=f'CL={grp_mean:.3f}{suffix}',
+                    annotation_position='top right',
+                )
+                fig.add_hline(
+                    y=grp_ucl, line_color=ref_color, line_dash='dash', line_width=1,
+                    annotation_text=f'UCL={grp_ucl:.3f}{suffix}',
+                    annotation_position='top right',
+                )
+                if grp_lcl > 0:
+                    fig.add_hline(
+                        y=grp_lcl, line_color=ref_color, line_dash='dash', line_width=1,
+                        annotation_text=f'LCL={grp_lcl:.3f}{suffix}',
+                        annotation_position='bottom right',
+                    )
 
+        title_suffix = '（グループ別制御限界）' if len(groups) > 1 else ''
         fig.update_layout(
-            title=f'SPC 管理図: {value_col}',
+            title=f'SPC 管理図: {value_col}{title_suffix}',
             template='plotly_white',
             hovermode='x unified',
             height=420,
@@ -387,19 +404,22 @@ def render_pareto_chart(
         df_p = df.copy()
         df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
 
-        grouped = (
+        # Compute total from ALL categories (not just top_n) for correct cumulative %
+        grouped_all = (
             df_p.groupby(category_col)[value_col]
             .agg(agg_func)
             .reset_index()
-            .sort_values(value_col, ascending=False)
-            .head(top_n)
         )
-        grouped = grouped.reset_index(drop=True)
-
-        total = grouped[value_col].sum()
+        total = float(pd.to_numeric(grouped_all[value_col], errors='coerce').sum())
         if total == 0 or not np.isfinite(total):
             return None
 
+        grouped = (
+            grouped_all
+            .sort_values(value_col, ascending=False)
+            .head(top_n)
+            .reset_index(drop=True)
+        )
         grouped['_cum_pct'] = (grouped[value_col].cumsum() / total * 100).round(1)
 
         fig = go.Figure()

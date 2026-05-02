@@ -109,9 +109,13 @@ def apply_filters(
     if date_range and date_col and date_col in filtered.columns:
         try:
             date_series = pd.to_datetime(filtered[date_col], errors='coerce')
+            # Strip timezone so comparison with naive Timestamps from Streamlit's date picker works
+            if hasattr(date_series.dtype, 'tz') and date_series.dtype.tz is not None:
+                date_series = date_series.dt.tz_localize(None)
             start = pd.Timestamp(date_range[0])
-            end = pd.Timestamp(date_range[1])
-            filtered = filtered[(date_series >= start) & (date_series <= end)]
+            # Add 1 day so the full end day (including any timestamp up to 23:59:59) is included
+            end = pd.Timestamp(date_range[1]) + pd.Timedelta(days=1)
+            filtered = filtered[(date_series >= start) & (date_series < end)]
         except Exception:
             pass
 

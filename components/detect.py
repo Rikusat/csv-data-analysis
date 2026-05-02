@@ -7,6 +7,7 @@ from typing import Dict, List
 DATE_KEYWORDS = [
     'date', '日付', 'month', '年', '月', 'time', 'datetime',
     '日時', '期間', 'week', '週', 'day', '日',
+    'timestamp', 'ts', '作成日', '更新日', '登録日', '発生日', '年月',
 ]
 CATEGORY_KEYWORDS = [
     # 汎用
@@ -107,20 +108,20 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
 
     if any(kw in col_lower for kw in DATE_KEYWORDS):
         try:
-            converted = pd.to_datetime(series.dropna().head(20), errors='coerce')
-            if converted.notna().sum() > 0 and converted.dropna().dt.year.between(1990, 2100).all():
+            converted = pd.to_datetime(series.dropna().head(100), errors='coerce')
+            if converted.notna().sum() > 0 and converted.dropna().dt.year.between(1900, 2100).all():
                 return True
         except Exception:
             pass
 
-    if series.dtype == 'object':
-        sample = series.dropna().head(20)
+    if pd.api.types.is_string_dtype(series):
+        sample = series.dropna().head(100)
         if len(sample) == 0:
             return False
         try:
             converted = pd.to_datetime(sample, errors='coerce')
             valid = converted.dropna()
-            if len(valid) / len(sample) >= 0.8 and valid.dt.year.between(1990, 2100).all():
+            if len(valid) / len(sample) >= 0.8 and valid.dt.year.between(1900, 2100).all():
                 return True
         except Exception:
             pass
@@ -132,7 +133,7 @@ def _is_numeric_column(series: pd.Series, col_lower: str) -> bool:
     if pd.api.types.is_numeric_dtype(series):
         return True
 
-    if series.dtype == 'object':
+    if pd.api.types.is_string_dtype(series):
         try:
             converted = pd.to_numeric(series.dropna(), errors='coerce')
             total = series.dropna().shape[0]
@@ -145,10 +146,12 @@ def _is_numeric_column(series: pd.Series, col_lower: str) -> bool:
 
 
 def _is_category_column(series: pd.Series, col_lower: str) -> bool:
+    if series.dropna().empty:
+        return False
     if any(kw in col_lower for kw in CATEGORY_KEYWORDS):
         return True
 
-    if series.dtype == 'object':
+    if pd.api.types.is_string_dtype(series):
         n_unique = series.nunique()
         n_total = series.shape[0]
         if n_unique <= 20:
