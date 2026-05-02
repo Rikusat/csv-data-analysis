@@ -32,6 +32,10 @@ def render_kpi_cards(
         agg_method: One of '合計', '平均', '最大', '最小'.
         max_cards: Cap the number of cards rendered.
     """
+    if df.empty:
+        st.info("フィルター結果が 0 件です。絞り込み条件を変更してください。")
+        return
+
     cols_to_show = numeric_cols[:max_cards]
     if not cols_to_show:
         st.info("数値列が見つかりませんでした。")
