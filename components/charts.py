@@ -49,14 +49,14 @@ def render_timeseries_chart(
         if group_col and group_col in df_p.columns:
             agg_dict = {m: agg_method for m in metrics}
             df_g = df_p.groupby([date_col, group_col], as_index=False).agg(agg_dict)
-            df_g = _downsample(df_g)
 
             groups = sorted(df_g[group_col].dropna().unique(), key=str)
             group_colors = {grp: _COLORS[i % len(_COLORS)] for i, grp in enumerate(groups)}
 
             fig = go.Figure()
             for grp in groups:
-                sub = df_g[df_g[group_col] == grp]
+                # Downsample per group so each gets up to _MAX_POINTS, not 1/N of it
+                sub = _downsample(df_g[df_g[group_col] == grp])
                 color = group_colors[grp]
                 for j, metric in enumerate(metrics):
                     label = f"{grp}  {metric}" if len(metrics) > 1 else str(grp)
