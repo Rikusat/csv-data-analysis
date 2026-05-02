@@ -108,9 +108,12 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
 
     if any(kw in col_lower for kw in DATE_KEYWORDS):
         try:
-            converted = pd.to_datetime(series.dropna().head(100), errors='coerce')
-            if converted.notna().sum() > 0 and converted.dropna().dt.year.between(1900, 2100).all():
-                return True
+            sample = series.dropna().head(100)
+            if len(sample) > 0:
+                converted = pd.to_datetime(sample, errors='coerce')
+                valid = converted.dropna()
+                if len(valid) / len(sample) >= 0.8 and valid.dt.year.between(1900, 2100).all():
+                    return True
         except Exception:
             pass
 
