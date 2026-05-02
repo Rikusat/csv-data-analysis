@@ -114,8 +114,8 @@ def _fmt(value: float) -> str:
         return f"{value / 1_000_000:.2f}M"
     if abs(value) >= 1_000:
         return f"{value:,.1f}"
-    if value == int(value):
-        return f"{int(value):,}"
+    if abs(value - round(value)) < 1e-9:
+        return f"{round(value):,}"
     return f"{value:.2f}"
 
 

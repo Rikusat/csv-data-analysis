@@ -390,6 +390,18 @@ def render_spc_chart(
             height=420,
             margin=dict(l=20, r=140, t=50, b=20),
         )
+
+        if not draw_ref_lines:
+            fig.add_annotation(
+                xref='paper', yref='paper',
+                x=0.0, y=1.07,
+                xanchor='left', yanchor='top',
+                text=f'※ グループ数が {len(groups)} 件のため CL/UCL/LCL は非表示です。'
+                     '3 グループ以下に絞り込むと管理線が表示されます。',
+                showarrow=False,
+                font=dict(size=11, color='#6b7280'),
+            )
+
         return fig
     except Exception:
         return None
