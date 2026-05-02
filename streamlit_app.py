@@ -150,7 +150,7 @@ def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Clean column names and convert formatted numeric strings to float in place."""
     df = df.copy()
     # Strip whitespace and BOM, deduplicate names
-    cols = [str(c).strip().lstrip('﻿') for c in df.columns]
+    cols = [str(c).strip().lstrip('\ufeff') for c in df.columns]
     seen: dict = {}
     clean: list = []
     for c in cols:
