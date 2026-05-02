@@ -239,15 +239,33 @@ def render_correlation_heatmap(
             return None
 
         df_num = df[cols].apply(pd.to_numeric, errors='coerce')
+        # Drop columns that are entirely NaN or constant (zero variance) after conversion
+        df_num = df_num.dropna(axis=1, how='all')
+        df_num = df_num.loc[:, df_num.nunique() > 1]
+        cols = df_num.columns.tolist()
+        if len(cols) < 2:
+            return None
+
         corr = df_num.corr()
 
+        # Build display text: show rounded value or '—' for NaN cells
+        corr_rounded = np.round(corr.values, 2)
+        text_matrix = np.where(
+            np.isnan(corr_rounded),
+            '—',
+            corr_rounded.astype(str),
+        )
+
+        # Replace NaN in z with 0 so Plotly colours the cell neutrally instead of blank
+        z_values = np.where(np.isnan(corr.values), 0.0, corr.values)
+
         fig = go.Figure(data=go.Heatmap(
-            z=corr.values,
+            z=z_values,
             x=corr.columns.tolist(),
             y=corr.index.tolist(),
             colorscale='RdBu',
             zmid=0,
-            text=np.round(corr.values, 2),
+            text=text_matrix,
             texttemplate='%{text}',
             textfont=dict(size=11),
             hoverongaps=False,
