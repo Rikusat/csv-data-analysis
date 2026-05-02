@@ -41,7 +41,7 @@ def render_kpi_cards(
         st.info("数値列が見つかりませんでした。")
         return
 
-    columns = st.columns(min(len(cols_to_show), 5))
+    columns = st.columns(len(cols_to_show))
 
     for i, col in enumerate(cols_to_show):
         with columns[i]:

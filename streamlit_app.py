@@ -208,6 +208,11 @@ def _load_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
     )
 
 
+@st.cache_data
+def _detect_columns(df: pd.DataFrame) -> dict:
+    return detect_columns(df)
+
+
 # ── Export helpers ────────────────────────────────────────────
 @st.cache_data
 def _to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -257,7 +262,7 @@ def _render_sidebar():
 
     st.sidebar.markdown("---")
 
-    col_info = detect_columns(df_raw)
+    col_info = _detect_columns(df_raw)
 
     with st.sidebar.expander("🔍 カラム判定結果", expanded=False):
         label_map = {
