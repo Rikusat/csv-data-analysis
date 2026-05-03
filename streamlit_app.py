@@ -340,6 +340,78 @@ def _apply_overlay_lines(fig, target, usl, lsl) -> None:
         )
 
 
+# ── SPC outlier helper ───────────────────────────────────────
+
+def _calc_spc_outliers(
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    group_col,
+):
+    """
+    Return (outliers_df, total_points) using the same ±3σ logic as render_spc_chart.
+    outliers_df is empty when no violations exist.
+    """
+    try:
+        df_p = df.copy()
+        df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
+        df_p[value_col] = pd.to_numeric(df_p[value_col], errors='coerce')
+        df_p = df_p.dropna(subset=[date_col, value_col])
+
+        if group_col and group_col in df_p.columns:
+            agg = df_p.groupby([date_col, group_col], as_index=False)[value_col].mean()
+        else:
+            agg = df_p.groupby(date_col, as_index=False)[value_col].mean()
+
+        if agg.empty:
+            return pd.DataFrame(), 0
+
+        total = len(agg)
+        rows = []
+
+        def _process_group(sub, grp_label=None):
+            mu = float(sub[value_col].mean())
+            sigma = float(sub[value_col].std())
+            if not np.isfinite(sigma) or sigma == 0:
+                sigma = abs(mu) * 0.001 if mu != 0 else 0.001
+            ucl, lcl = mu + 3 * sigma, mu - 3 * sigma
+            for _, row in sub.iterrows():
+                v = float(row[value_col])
+                if v > ucl or v < lcl:
+                    r = {
+                        '日付': row[date_col].date(),
+                        '実測値': round(v, 4),
+                        '偏差 (実測 − CL)': round(v - mu, 4),
+                        'CL': round(mu, 4),
+                        'UCL': round(ucl, 4),
+                        'LCL': round(lcl, 4),
+                        '判定': 'UCL 超過' if v > ucl else 'LCL 超過',
+                    }
+                    if grp_label is not None:
+                        r[group_col] = grp_label
+                    rows.append(r)
+
+        if group_col and group_col in agg.columns:
+            for grp in sorted(agg[group_col].dropna().unique(), key=str):
+                _process_group(agg[agg[group_col] == grp], grp)
+        else:
+            _process_group(agg)
+
+        if not rows:
+            return pd.DataFrame(), total
+
+        out = pd.DataFrame(rows).sort_values('日付').reset_index(drop=True)
+        # Reorder: 日付 → group (if any) → 実測値 → 偏差 → CL/UCL/LCL → 判定
+        base_cols = ['日付']
+        if group_col and group_col in out.columns:
+            base_cols.append(group_col)
+        base_cols += ['実測値', '偏差 (実測 − CL)', 'CL', 'UCL', 'LCL', '判定']
+        out = out[[c for c in base_cols if c in out.columns]]
+        return out, total
+    except Exception:
+        return pd.DataFrame(), 0
+
+
 # ── Process capability helpers ───────────────────────────────
 
 def _calc_process_capability(series: pd.Series, usl, lsl):
@@ -526,6 +598,31 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         st.error(
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
             "数値列を選択してください。"
+        )
+
+    # ── SPC 異常点サマリー ────────────────────────────────────
+    st.markdown('<p class="section-title">SPC 異常点サマリー</p>', unsafe_allow_html=True)
+
+    outliers_df, total_pts = _calc_spc_outliers(df, date_col, spc_metric, spc_group)
+
+    if outliers_df.empty:
+        st.success(f"✅ 「{spc_metric}」に管理外点はありません。工程は ±3σ 以内で安定しています。")
+    else:
+        pct = len(outliers_df) / total_pts * 100 if total_pts > 0 else 0
+        st.warning(
+            f"⚠️ 管理外点: **{len(outliers_df)}** 件 / 全 {total_pts} 点（{pct:.1f}%）"
+        )
+        st.dataframe(
+            outliers_df,
+            use_container_width=True,
+            height=min(400, (len(outliers_df) + 1) * 35 + 40),
+        )
+        st.download_button(
+            "⬇️ 異常点 CSV ダウンロード",
+            data=outliers_df.to_csv(index=False).encode('utf-8-sig'),
+            file_name=f"spc_outliers_{spc_metric}.csv",
+            mime="text/csv",
+            key='dl_outliers',
         )
 
     # ── 工程能力指数 ──────────────────────────────────────────
