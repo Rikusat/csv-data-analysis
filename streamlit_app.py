@@ -239,24 +239,47 @@ def _render_sidebar():
     st.sidebar.title("🔬 半導体工場 分析")
     st.sidebar.markdown("---")
 
-    uploaded = st.sidebar.file_uploader(
-        "CSV / Excel をアップロード",
+    uploaded_list = st.sidebar.file_uploader(
+        "CSV / Excel をアップロード（複数可）",
         type=['csv', 'xlsx'],
-        help="CSV（UTF-8 / Shift-JIS / CP932 / タブ・セミコロン区切り）または Excel（.xlsx）対応",
+        accept_multiple_files=True,
+        help="CSV（UTF-8 / Shift-JIS / CP932 / タブ・セミコロン区切り）または Excel（.xlsx）。複数ファイルを選択すると縦結合されます。",
     )
 
-    is_demo = uploaded is None
+    is_demo = len(uploaded_list) == 0
 
     if is_demo:
         df_raw = _demo_data()
     else:
         with st.spinner("ファイルを読み込み中..."):
-            try:
-                df_raw = _load_file(uploaded.read(), uploaded.name)
-            except ValueError as exc:
-                st.sidebar.error(str(exc))
+            loaded_dfs: list[pd.DataFrame] = []
+            for f in uploaded_list:
+                try:
+                    df_f = _load_file(f.read(), f.name).copy()
+                    if len(uploaded_list) > 1:
+                        df_f['_source'] = f.name
+                    loaded_dfs.append(df_f)
+                except ValueError as exc:
+                    st.sidebar.error(f"{f.name}: {exc}")
+
+            if not loaded_dfs:
                 df_raw = _demo_data()
                 is_demo = True
+            elif len(loaded_dfs) == 1:
+                df_raw = loaded_dfs[0]
+            else:
+                col_sets = [set(d.columns) for d in loaded_dfs]
+                common_n = len(col_sets[0].intersection(*col_sets[1:]))
+                all_n = len(col_sets[0].union(*col_sets[1:]))
+                if common_n < all_n:
+                    st.sidebar.info(
+                        f"共通列: {common_n} / 全 {all_n} 列。"
+                        "共通でない列は NaN で補完されます。"
+                    )
+                df_raw = pd.concat(loaded_dfs, ignore_index=True)
+                st.sidebar.success(
+                    f"✅ {len(loaded_dfs)} ファイルを結合: {len(df_raw):,} 行"
+                )
 
     st.sidebar.markdown(
         f"**行数:** {len(df_raw):,}　**列数:** {df_raw.shape[1]}"
