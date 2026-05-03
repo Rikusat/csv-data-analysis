@@ -265,7 +265,7 @@ def _render_sidebar():
         "CSV / Excel をアップロード（複数可）",
         type=['csv', 'xlsx'],
         accept_multiple_files=True,
-        help="CSV（UTF-8 / Shift-JIS / CP932 / タブ・セミコロン区切り）または Excel（.xlsx）。複数ファイルを選択すると縦結合されます。",
+        help="CSV（UTF-8 / Shift-JIS / CP932 / タブ・セミコロン区切り）または Excel（.xlsx）。複数ファイルを選択すると縦結合されます。上限: 1ファイルあたり 200 MB。",
     )
 
     is_demo = len(uploaded_list) == 0
@@ -273,14 +273,23 @@ def _render_sidebar():
     if is_demo:
         df_raw = _demo_data()
     else:
+        _total_bytes = sum(f.size for f in uploaded_list)
+        if _total_bytes > 50 * 1024 * 1024:
+            st.sidebar.warning(
+                f"合計ファイルサイズが大きいです（{_total_bytes / 1024 / 1024:.0f} MB）。"
+                "読み込みに時間がかかる場合があります。"
+            )
         with st.spinner("ファイルを読み込み中..."):
             loaded_dfs: list[pd.DataFrame] = []
             for f in uploaded_list:
                 try:
-                    df_f = _load_file(f.read(), f.name).copy()
+                    raw_bytes = f.read()
+                    df_f = _load_file(raw_bytes, f.name).copy()
                     if len(uploaded_list) > 1:
                         df_f['_source'] = f.name
                     loaded_dfs.append(df_f)
+                    size_mb = len(raw_bytes) / 1024 / 1024
+                    st.sidebar.caption(f"📄 {f.name}  ({size_mb:.1f} MB, {len(df_f):,} 行)")
                 except ValueError as exc:
                     st.sidebar.error(f"{f.name}: {exc}")
 
