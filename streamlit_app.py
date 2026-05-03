@@ -293,6 +293,33 @@ def _render_sidebar():
 
     col_info = _detect_columns(df_raw)
 
+    # ── Column role overrides ─────────────────────────────────
+    _ROLE_JP  = {'date': '日付', 'category': 'カテゴリ', 'numeric': '数値', 'text': 'テキスト'}
+    _ROLE_EN  = {v: k for k, v in _ROLE_JP.items()}
+    _ROLE_OPTS = list(_ROLE_JP.values())
+
+    with st.sidebar.expander("🔧 列ロール上書き", expanded=False):
+        st.caption("自動判定が誤っている列を修正できます。")
+        ovr_cols = st.multiselect(
+            "変更する列",
+            df_raw.columns.tolist(),
+            key='role_ovr_cols',
+        )
+        for col in ovr_cols:
+            current_role = next(
+                (r for r, cs in col_info.items() if col in cs), 'text'
+            )
+            new_label = st.selectbox(
+                f"`{col}`",
+                _ROLE_OPTS,
+                index=_ROLE_OPTS.index(_ROLE_JP[current_role]),
+                key=f'role_ovr_{col}',
+            )
+            new_role = _ROLE_EN[new_label]
+            if new_role != current_role:
+                col_info[current_role].remove(col)
+                col_info[new_role].append(col)
+
     with st.sidebar.expander("🔍 カラム判定結果", expanded=False):
         label_map = {
             'date':     '📅 日付',
