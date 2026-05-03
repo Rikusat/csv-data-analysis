@@ -1031,6 +1031,63 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
         else:
             st.error("ヒートマップを生成できませんでした。日付列・カテゴリ列・数値列を確認してください。")
 
+    # ── ランキングテーブル ────────────────────────────────────
+    st.markdown('<p class="section-title">ランキングテーブル</p>', unsafe_allow_html=True)
+
+    rk1, rk2, rk3, rk4 = st.columns(4)
+    with rk1:
+        rk_cat = st.selectbox("カテゴリ列", col_info['category'], key='rk_cat')
+    with rk2:
+        rk_val = st.selectbox("集計列", col_info['numeric'], key='rk_val')
+    with rk3:
+        rk_agg = st.selectbox("集計方法", ['合計', '平均', '最大', '最小'], key='rk_agg')
+    with rk4:
+        rk_order = st.selectbox("並び順", ['降順（高い順）', '昇順（低い順）'], key='rk_order')
+
+    rk_n = st.slider("表示件数", min_value=3, max_value=50, value=10, key='rk_n')
+
+    try:
+        _rk_agg_map = {'合計': 'sum', '平均': 'mean', '最大': 'max', '最小': 'min'}
+        agg_fn = _rk_agg_map[rk_agg]
+        ascending = rk_order == '昇順（低い順）'
+
+        tmp = df[[rk_cat, rk_val]].copy()
+        tmp[rk_val] = pd.to_numeric(tmp[rk_val], errors='coerce')
+
+        all_agg = tmp.groupby(rk_cat)[rk_val].agg(agg_fn).dropna()
+        if all_agg.empty:
+            st.info("集計結果が空です。列を確認してください。")
+        else:
+            total   = float(all_agg.sum())
+            mean_v  = float(all_agg.mean())
+
+            ranked = (
+                all_agg
+                .sort_values(ascending=ascending)
+                .head(rk_n)
+                .reset_index()
+            )
+            ranked.columns = [rk_cat, rk_agg]
+            ranked.insert(0, '順位', range(1, len(ranked) + 1))
+            ranked[f'全体比 (%)'] = (ranked[rk_agg] / total * 100).round(1) if total != 0 else float('nan')
+            ranked['平均比']       = (ranked[rk_agg] / mean_v).round(3)       if mean_v != 0 else float('nan')
+            ranked['差分 (vs 平均)'] = (ranked[rk_agg] - mean_v).round(3)
+            ranked[rk_agg]         = ranked[rk_agg].round(3)
+
+            st.dataframe(
+                ranked, use_container_width=True,
+                height=min(500, (len(ranked) + 1) * 35 + 40),
+            )
+            st.download_button(
+                "⬇️ ランキング CSV ダウンロード",
+                data=ranked.to_csv(index=False).encode('utf-8-sig'),
+                file_name=f"ranking_{rk_cat}_{rk_val}.csv",
+                mime="text/csv",
+                key='dl_ranking',
+            )
+    except Exception:
+        st.error("ランキングテーブルを生成できませんでした。カテゴリ列と数値列を確認してください。")
+
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
     if len(col_info['numeric']) < 2:
