@@ -364,8 +364,9 @@ _COMP_OFFSET = {
     'ME': lambda n: pd.DateOffset(months=n),
     'YE': lambda n: pd.DateOffset(years=n),
 }
-_COMP_UNIT    = {'D': '日', 'W': '週', 'ME': 'ヶ月', 'YE': '年'}
-_COMP_DEFAULT = {'D': 30,   'W': 8,    'ME': 6,      'YE': 2}
+_COMP_UNIT    = {'D': '日',        'W': '週',     'ME': 'ヶ月',   'YE': '年'}
+_COMP_DEFAULT = {'D': 30,          'W': 8,         'ME': 6,        'YE': 2}
+_PERIOD_FMT   = {'D': '%Y/%m/%d',  'W': '%Y-W%W',  'ME': '%Y/%m',  'YE': '%Y'}
 
 
 def _build_comparison_df(
@@ -870,6 +871,58 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
             )
         else:
             st.error("前期比較グラフを生成できませんでした。データを確認してください。")
+
+        # ── 前期比トレンド表 ─────────────────────────────────
+        st.markdown("**前期比トレンド表**")
+        try:
+            fmt = _PERIOD_FMT.get(freq, '%Y/%m/%d')
+            tmp = cmp_df[[date_col, '_period', cmp_metric]].copy()
+            tmp[date_col]   = pd.to_datetime(tmp[date_col], errors='coerce')
+            tmp[cmp_metric] = pd.to_numeric(tmp[cmp_metric], errors='coerce')
+
+            if freq:
+                tmp['_label'] = (
+                    tmp[date_col].dt.to_period(freq).dt.start_time.dt.strftime(fmt)
+                )
+            else:
+                tmp['_label'] = tmp[date_col].dt.strftime(fmt)
+
+            agg_tbl = (
+                tmp.groupby(['_label', '_period'])[cmp_metric]
+                .agg(cmp_agg_en)
+                .reset_index()
+            )
+            pivot_tbl = (
+                agg_tbl.pivot(index='_label', columns='_period', values=cmp_metric)
+                .reset_index()
+            )
+            pivot_tbl.columns.name = None
+
+            if '今期' in pivot_tbl.columns and '前期' in pivot_tbl.columns:
+                for c in ('今期', '前期'):
+                    pivot_tbl[c] = pivot_tbl[c].round(3)
+                pivot_tbl['増減'] = (pivot_tbl['今期'] - pivot_tbl['前期']).round(3)
+                pivot_tbl['増減率 (%)'] = (
+                    (pivot_tbl['今期'] - pivot_tbl['前期'])
+                    / pivot_tbl['前期'].abs() * 100
+                ).round(1)
+                pivot_tbl = (
+                    pivot_tbl.rename(columns={'_label': '期間'})
+                    [['期間', '今期', '前期', '増減', '増減率 (%)']]
+                    .sort_values('期間').reset_index(drop=True)
+                )
+                st.dataframe(pivot_tbl, use_container_width=True)
+                st.download_button(
+                    "⬇️ 前期比トレンド表 CSV",
+                    data=pivot_tbl.to_csv(index=False).encode('utf-8-sig'),
+                    file_name=f"trend_comparison_{cmp_metric}.csv",
+                    mime="text/csv",
+                    key='dl_trend_cmp',
+                )
+            else:
+                st.info("今期・前期のデータが揃っていません。比較期間を広げてください。")
+        except Exception:
+            st.error("前期比トレンド表の生成に失敗しました。")
 
 
 def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
