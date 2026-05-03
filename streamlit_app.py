@@ -317,8 +317,10 @@ def _render_sidebar():
             )
             new_role = _ROLE_EN[new_label]
             if new_role != current_role:
-                col_info[current_role].remove(col)
-                col_info[new_role].append(col)
+                if col in col_info[current_role]:
+                    col_info[current_role].remove(col)
+                if col not in col_info[new_role]:
+                    col_info[new_role].append(col)
 
     with st.sidebar.expander("🔍 カラム判定結果", expanded=False):
         label_map = {
@@ -1405,12 +1407,7 @@ def _tab_data(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
 # ── HTML Report builder ───────────────────────────────────────
 
-def _build_html_report(
-    df: pd.DataFrame,
-    col_info: dict,
-    freq: str = 'D',
-    selected_metrics: list | None = None,
-) -> str:
+def _build_html_report(df, col_info, freq='D', selected_metrics=None):
     """Return a self-contained HTML string suitable for browser printing / PDF save."""
 
     numeric_cols = col_info.get('numeric', [])
@@ -1436,34 +1433,36 @@ def _build_html_report(
             pass
 
     # ── Chart section ─────────────────────────────────────────
+    # Plotly CDN は <head> で一括ロード → 全チャートで include_plotlyjs=False
     charts_html = ""
+    _chart_layout = dict(
+        paper_bgcolor='white', plot_bgcolor='white',
+        font_color='#111827', margin=dict(t=40, b=40, l=40, r=20),
+    )
     if date_col and metrics:
         value_col = metrics[0]
         group_col = category_cols[0] if category_cols else None
-        fig = render_timeseries_chart(df, date_col, value_col, group_col, freq)
+        # numeric_cols にリストを渡し selected_metrics で絞り込む（正しいシグネチャ）
+        fig = render_timeseries_chart(
+            df, date_col, numeric_cols,
+            group_col=group_col,
+            selected_metrics=[value_col],
+            freq=freq,
+        )
         if fig is not None:
-            fig.update_layout(
-                paper_bgcolor='white',
-                plot_bgcolor='white',
-                font_color='#111827',
-                margin=dict(t=40, b=40, l=40, r=20),
-            )
+            fig.update_layout(**_chart_layout)
             charts_html += (
                 '<h2 class="section-title">トレンドチャート</h2>'
-                + fig.to_html(include_plotlyjs='cdn', full_html=False)
+                + fig.to_html(include_plotlyjs=False, full_html=False)
             )
 
     if category_cols and metrics:
         cat_col = category_cols[0]
         value_col = metrics[0]
-        fig2 = render_category_chart(df, cat_col, value_col, '平均')
+        # agg_method をキーワード引数で指定（4番目の位置は chart_type のため）
+        fig2 = render_category_chart(df, cat_col, value_col, agg_method='平均')
         if fig2 is not None:
-            fig2.update_layout(
-                paper_bgcolor='white',
-                plot_bgcolor='white',
-                font_color='#111827',
-                margin=dict(t=40, b=40, l=40, r=20),
-            )
+            fig2.update_layout(**_chart_layout)
             charts_html += (
                 '<h2 class="section-title">カテゴリ別集計</h2>'
                 + fig2.to_html(include_plotlyjs=False, full_html=False)
@@ -1489,6 +1488,7 @@ def _build_html_report(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>分析レポート — {generated_at}</title>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
