@@ -752,6 +752,66 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
     else:
         st.error("パレート図を生成できませんでした。カテゴリ列と数値列を確認してください。")
 
+    # ── シフト別集計 ──────────────────────────────────────────
+    st.markdown('<p class="section-title">シフト別集計</p>', unsafe_allow_html=True)
+
+    if not col_info['category'] or not col_info['numeric']:
+        st.info("シフト別集計にはカテゴリ列と数値列の両方が必要です。")
+    else:
+        # Auto-detect shift column by keyword
+        auto_shift = next(
+            (c for c in col_info['category'] if any(kw in c.lower() for kw in ('shift', 'シフト'))),
+            None,
+        )
+        shift_default_idx = col_info['category'].index(auto_shift) if auto_shift else 0
+
+        if auto_shift:
+            st.caption(f"🔍 シフト列を自動検出: `{auto_shift}`　（変更する場合は下のセレクトボックスで選択）")
+        else:
+            st.caption("シフト列が自動検出されませんでした。手動でシフト相当の列を選択してください。")
+
+        sh1, sh2, sh3 = st.columns(3)
+        with sh1:
+            shift_col = st.selectbox(
+                "シフト列", col_info['category'],
+                index=shift_default_idx, key='shift_col',
+            )
+        with sh2:
+            shift_metric = st.selectbox("集計指標", col_info['numeric'], key='shift_metric')
+        with sh3:
+            shift_agg = st.selectbox(
+                "集計方法", ['平均', '合計', '最大', '最小'], key='shift_agg'
+            )
+
+        fig_shift = render_category_chart(df, shift_col, shift_metric, '棒グラフ', shift_agg, top_n=20)
+        if fig_shift:
+            st.plotly_chart(fig_shift, use_container_width=True)
+        else:
+            st.error(f"「{shift_metric}」のシフト別グラフを生成できませんでした。数値列を確認してください。")
+
+        # Summary table: shift × all numeric cols (cap at 8)
+        st.markdown("**シフト別サマリー（全指標）**")
+        try:
+            agg_func_map = {'平均': 'mean', '合計': 'sum', '最大': 'max', '最小': 'min'}
+            agg_func = agg_func_map[shift_agg]
+            num_cols_tbl = col_info['numeric'][:8]
+            tmp = df[[shift_col] + num_cols_tbl].copy()
+            for c in num_cols_tbl:
+                tmp[c] = pd.to_numeric(tmp[c], errors='coerce')
+            summary_df = (
+                tmp.groupby(shift_col)[num_cols_tbl]
+                .agg(agg_func)
+                .round(3)
+                .reset_index()
+            )
+            st.dataframe(summary_df, use_container_width=True)
+            if len(col_info['numeric']) > 8:
+                st.caption(
+                    f"※ 表示は先頭 8 列のみ。残り {len(col_info['numeric']) - 8} 列は省略しています。"
+                )
+        except Exception:
+            st.error("シフト別サマリーの生成に失敗しました。")
+
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
     if len(col_info['numeric']) < 2:
