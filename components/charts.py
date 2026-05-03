@@ -655,6 +655,94 @@ def render_period_bar_chart(
         return None
 
 
+def render_heatmap_chart(
+    df: pd.DataFrame,
+    date_col: str,
+    category_col: str,
+    value_col: str,
+    agg_method: str = '平均',
+    freq: Optional[str] = None,
+    reverse_scale: bool = False,
+) -> Optional[go.Figure]:
+    """
+    Generate a date × category heatmap coloured by an aggregated numeric value.
+
+    Args:
+        df: Filtered DataFrame.
+        date_col: Date column for the X axis.
+        category_col: Category column for the Y axis.
+        value_col: Numeric column used for cell colour.
+        agg_method: '合計' | '平均' | '最大' | '最小'
+        freq: Optional time-bucket frequency ('D', 'W', 'ME', 'YE').
+        reverse_scale: Reverse the colour scale (useful for "lower is better" metrics).
+
+    Returns:
+        Plotly Figure or None on error.
+    """
+    try:
+        agg_func = _AGG_MAP.get(agg_method, 'mean')
+        fmt = _PERIOD_FMT.get(freq, '%Y/%m/%d') if freq else '%Y/%m/%d'
+
+        df_p = df.copy()
+        df_p[date_col]   = pd.to_datetime(df_p[date_col], errors='coerce')
+        df_p[value_col]  = pd.to_numeric(df_p[value_col], errors='coerce')
+        df_p = df_p.dropna(subset=[date_col, value_col, category_col])
+        if df_p.empty:
+            return None
+
+        if freq:
+            df_p['_period'] = df_p[date_col].dt.to_period(freq).dt.start_time
+        else:
+            df_p['_period'] = df_p[date_col].dt.normalize()
+
+        agg = (
+            df_p.groupby(['_period', category_col])[value_col]
+            .agg(agg_func)
+            .reset_index()
+        )
+
+        pivot = agg.pivot_table(index=category_col, columns='_period', values=value_col)
+        if pivot.empty:
+            return None
+
+        # Limit to the most recent 60 periods to keep the chart readable
+        if pivot.shape[1] > 60:
+            pivot = pivot.iloc[:, -60:]
+
+        x_labels = [d.strftime(fmt) for d in pivot.columns]
+
+        show_text = pivot.size <= 200
+        text_vals = np.round(pivot.values, 2) if show_text else None
+
+        colorscale = 'RdYlGn_r' if reverse_scale else 'RdYlGn'
+
+        heatmap_kwargs: dict = dict(
+            z=pivot.values,
+            x=x_labels,
+            y=pivot.index.tolist(),
+            colorscale=colorscale,
+            hoverongaps=False,
+            colorbar=dict(title=value_col),
+        )
+        if show_text and text_vals is not None:
+            heatmap_kwargs['text'] = text_vals
+            heatmap_kwargs['texttemplate'] = '%{text}'
+            heatmap_kwargs['textfont'] = dict(size=9)
+
+        fig = go.Figure(data=go.Heatmap(**heatmap_kwargs))
+        fig.update_layout(
+            title=f'ヒートマップ: {category_col} × {value_col}（{agg_method}）',
+            xaxis=dict(title=date_col, tickangle=-45),
+            yaxis=dict(title=category_col),
+            template='plotly_white',
+            height=max(300, len(pivot.index) * 40 + 130),
+            margin=dict(l=20, r=20, t=50, b=80),
+        )
+        return fig
+    except Exception:
+        return None
+
+
 # ── Private helpers ──────────────────────────────────────────
 
 

@@ -14,6 +14,7 @@ import streamlit as st
 from components.charts import (
     render_category_chart,
     render_correlation_heatmap,
+    render_heatmap_chart,
     render_pareto_chart,
     render_period_bar_chart,
     render_scatter_chart,
@@ -895,6 +896,43 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
                 )
         except Exception:
             st.error("シフト別サマリーの生成に失敗しました。")
+
+    # ── 稼働率ヒートマップ ────────────────────────────────────
+    st.markdown('<p class="section-title">稼働率ヒートマップ</p>', unsafe_allow_html=True)
+
+    if not col_info['date']:
+        st.info("ヒートマップには日付列が必要です。CSVに日付列を含めてください。")
+    else:
+        hm1, hm2, hm3 = st.columns(3)
+        with hm1:
+            hm_cat = st.selectbox("カテゴリ列（Y 軸）", col_info['category'], key='hm_cat')
+        with hm2:
+            hm_val = st.selectbox("数値列（色）", col_info['numeric'], key='hm_val')
+        with hm3:
+            hm_agg = st.selectbox("集計方法", ['平均', '合計', '最大', '最小'], key='hm_agg')
+
+        hm4, hm5 = st.columns(2)
+        with hm4:
+            _hm_freq_opts = {'日次': 'D', '週次': 'W', '月次': 'ME', '年次': 'YE'}
+            hm_freq_sel = st.selectbox(
+                "集計粒度", list(_hm_freq_opts.keys()), index=2, key='hm_freq'
+            )
+            hm_freq = _hm_freq_opts[hm_freq_sel]
+        with hm5:
+            hm_reverse = st.checkbox(
+                "スケールを反転（低い値が良い指標）",
+                key='hm_reverse',
+                help="欠陥密度・不良率など低い方が望ましい指標はチェックしてください。",
+            )
+
+        fig_hm = render_heatmap_chart(
+            df, col_info['date'][0], hm_cat, hm_val, hm_agg, hm_freq, hm_reverse,
+        )
+        if fig_hm:
+            st.plotly_chart(fig_hm, use_container_width=True)
+            st.caption("色が緑に近いほど良好、赤に近いほど注意が必要です（スケール反転時は逆）。直近 60 期間を表示。")
+        else:
+            st.error("ヒートマップを生成できませんでした。日付列・カテゴリ列・数値列を確認してください。")
 
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
