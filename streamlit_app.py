@@ -1375,10 +1375,73 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
         st.info("相関ヒートマップを生成できませんでした。")
 
 
+def _build_quality_summary(df: pd.DataFrame, col_info: dict) -> pd.DataFrame:
+    role_map = {col: role for role, cols in col_info.items() for col in cols}
+    rows = []
+    for col in df.columns:
+        series = df[col]
+        n_total = len(series)
+        n_missing = int(series.isna().sum())
+        missing_pct = round(n_missing / n_total * 100, 1) if n_total > 0 else 0.0
+        n_unique = int(series.nunique())
+        role = role_map.get(col, 'text')
+        notes = []
+        if role == 'numeric':
+            converted = pd.to_numeric(series, errors='coerce')
+            bad = int((series.notna() & converted.isna()).sum())
+            if bad > 0:
+                notes.append(f"数値変換不可: {bad} 件")
+        if role == 'date':
+            converted = pd.to_datetime(series, errors='coerce')
+            bad = int((series.notna() & converted.isna()).sum())
+            if bad > 0:
+                notes.append(f"日付変換不可: {bad} 件")
+        if missing_pct >= 30:
+            notes.append("欠損率高")
+        rows.append({
+            '列名': col,
+            'ロール': role,
+            '欠損数': n_missing,
+            '欠損率(%)': missing_pct,
+            'ユニーク数': n_unique,
+            '備考': ' / '.join(notes) if notes else '―',
+        })
+    return pd.DataFrame(rows)
+
+
 def _tab_data(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     if df.empty:
         st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
         return
+
+    # ── データ品質サマリー ────────────────────────────────────
+    st.markdown('<p class="section-title">データ品質サマリー</p>', unsafe_allow_html=True)
+    n_dup = int(df.duplicated().sum())
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("行数", f"{len(df):,}")
+    q2.metric("列数", f"{df.shape[1]:,}")
+    q3.metric("重複行", f"{n_dup:,}", delta=f"-{n_dup}" if n_dup else None,
+              delta_color="inverse" if n_dup else "off")
+    total_cells = len(df) * df.shape[1]
+    total_missing = int(df.isna().sum().sum())
+    q4.metric("欠損セル率", f"{total_missing / total_cells * 100:.1f}%" if total_cells else "0%")
+
+    quality_df = _build_quality_summary(df, col_info)
+    has_issues = quality_df['備考'].ne('―').any()
+    with st.expander(
+        f"列ごとの品質詳細 {'⚠️ 要確認あり' if has_issues else '✅ 問題なし'}",
+        expanded=has_issues,
+    ):
+        def _highlight_issues(row):
+            color = '#fff3cd' if row['備考'] != '―' else ''
+            return [f'background-color: {color}'] * len(row)
+        st.dataframe(
+            quality_df.style.apply(_highlight_issues, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.markdown("---")
     c1, c2 = st.columns([3, 1])
     with c1:
         selected_cols = st.multiselect(
