@@ -340,6 +340,69 @@ def _apply_overlay_lines(fig, target, usl, lsl) -> None:
         )
 
 
+# ── Process capability helpers ───────────────────────────────
+
+def _calc_process_capability(series: pd.Series, usl, lsl):
+    """Compute Cp, Cpk, σ level, μ, σ, n. Returns dict or None on failure."""
+    s = pd.to_numeric(series, errors='coerce').dropna()
+    if len(s) < 2:
+        return None
+    mu = float(s.mean())
+    sigma = float(s.std(ddof=1))
+    if sigma == 0:
+        return None
+
+    cp  = (usl - lsl) / (6 * sigma) if usl is not None and lsl is not None else None
+    cpu = (usl - mu)  / (3 * sigma) if usl is not None else None
+    cpl = (mu  - lsl) / (3 * sigma) if lsl is not None else None
+
+    if cpu is not None and cpl is not None:
+        cpk = min(cpu, cpl)
+    elif cpu is not None:
+        cpk = cpu
+    elif cpl is not None:
+        cpk = cpl
+    else:
+        cpk = None
+
+    return {
+        'mu': mu, 'sigma': sigma, 'n': int(len(s)),
+        'cp': cp, 'cpk': cpk,
+        'sigma_level': cpk * 3 if cpk is not None else None,
+    }
+
+
+_CPK_THRESHOLDS = [
+    (1.67, '#10b981', '超優良'),
+    (1.33, '#2563EB', '優良'),
+    (1.00, '#f59e0b', '合格'),
+]
+
+
+def _cpk_color_label(cpk):
+    if cpk is None:
+        return '#6b7280', '—'
+    for thr, color, label in _CPK_THRESHOLDS:
+        if cpk >= thr:
+            return color, label
+    return '#ef4444', '要改善'
+
+
+def _cap_card(label: str, value: str, sub: str, border_color: str) -> str:
+    css = (
+        f"padding:16px;background:#fff;border-radius:12px;"
+        f"box-shadow:0 2px 8px rgba(0,0,0,0.08);border-left:4px solid {border_color};"
+        f"margin-bottom:8px;"
+    )
+    return (
+        f'<div style="{css}">'
+        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">{label}</p>'
+        f'<p style="color:#111827;font-size:22px;font-weight:700;margin:6px 0 0 0;">{value}</p>'
+        f'<p style="color:#9ca3af;font-size:11px;margin:2px 0 0 0;">{sub}</p>'
+        f'</div>'
+    )
+
+
 # ── Tab renderers ─────────────────────────────────────────────
 
 def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
@@ -452,6 +515,48 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
             "数値列を選択してください。"
         )
+
+    # ── 工程能力指数 ──────────────────────────────────────────
+    st.markdown('<p class="section-title">工程能力指数（Cp / Cpk）</p>', unsafe_allow_html=True)
+    st.caption(f"対象指標: **{spc_metric}** ／ 規格上下限は上の「目標線・規格線の設定」と共有")
+
+    if usl_val is None and lsl_val is None:
+        st.info("📏 上の「目標線・規格線の設定」で USL または LSL を入力すると Cp・Cpk を算出します。")
+    else:
+        cap = _calc_process_capability(df[spc_metric], usl_val, lsl_val)
+        if cap is None:
+            st.warning(f"「{spc_metric}」の工程能力を計算できません。有効なデータが 2 件以上必要です。")
+        else:
+            cpk_color, cpk_judgment = _cpk_color_label(cap['cpk'])
+
+            cards = []
+            if cap['cp'] is not None:
+                cards.append(('Cp', f"{cap['cp']:.3f}", '工程能力（両側）', '#2563EB'))
+            if cap['cpk'] is not None:
+                cards.append(('Cpk', f"{cap['cpk']:.3f}", cpk_judgment, cpk_color))
+            if cap['sigma_level'] is not None:
+                cards.append(('σ 水準', f"{cap['sigma_level']:.2f} σ", '中心からの余裕', '#2563EB'))
+            cards.append(('μ（平均）', f"{cap['mu']:.4g}", f"n = {cap['n']:,}", '#6b7280'))
+            cards.append(('σ（標準偏差）', f"{cap['sigma']:.4g}", '母集団推定 (ddof=1)', '#6b7280'))
+
+            cols = st.columns(len(cards))
+            for i, (label, value, sub, color) in enumerate(cards):
+                with cols[i]:
+                    st.markdown(_cap_card(label, value, sub, color), unsafe_allow_html=True)
+
+            with st.expander("📘 Cpk 判定基準", expanded=False):
+                st.markdown(
+                    "| Cpk | 判定 | 意味 |\n"
+                    "|-----|------|------|\n"
+                    "| ≥ 1.67 | 🟢 超優良 | 6σ 以上の余裕。工程は非常に安定 |\n"
+                    "| ≥ 1.33 | 🔵 優良 | 一般的な量産合格基準 |\n"
+                    "| ≥ 1.00 | 🟡 合格 | 最低限の基準。改善余地あり |\n"
+                    "| < 1.00 | 🔴 要改善 | 規格外品の発生リスクあり |"
+                )
+                if cap['cp'] is not None and cap['cpk'] is not None:
+                    skew = cap['cp'] - cap['cpk']
+                    if skew > 0.1:
+                        st.caption(f"⚠️ Cp ({cap['cp']:.3f}) と Cpk ({cap['cpk']:.3f}) の差 ({skew:.3f}) が大きく、工程平均が規格中心から偏っています。")
 
     # ── 期間集計バーチャート ──────────────────────────────────
     st.markdown('<p class="section-title">期間集計バーチャート</p>', unsafe_allow_html=True)
