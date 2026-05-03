@@ -1180,7 +1180,7 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
         st.info("相関ヒートマップを生成できませんでした。")
 
 
-def _tab_data(df: pd.DataFrame) -> None:
+def _tab_data(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     c1, c2 = st.columns([3, 1])
     with c1:
         selected_cols = st.multiselect(
@@ -1229,6 +1229,173 @@ def _tab_data(df: pd.DataFrame) -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+    # ── HTML Report ───────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📄 印刷レポート")
+
+    numeric_cols = col_info.get('numeric', [])
+    if not numeric_cols:
+        st.info("数値列がないためレポートを生成できません。")
+    else:
+        rpt_metrics = st.multiselect(
+            "レポートに含める指標",
+            numeric_cols,
+            default=numeric_cols[:5],
+            key='rpt_metrics',
+        )
+        if st.button("📄 レポートを生成", key='gen_report'):
+            html = _build_html_report(df, col_info, freq, rpt_metrics or None)
+            st.session_state['_report_html'] = html
+
+        if st.session_state.get('_report_html'):
+            ts = datetime.now().strftime('%Y%m%d_%H%M')
+            st.download_button(
+                "⬇️ HTML レポートをダウンロード",
+                data=st.session_state['_report_html'].encode('utf-8'),
+                file_name=f"report_{ts}.html",
+                mime="text/html",
+                key='dl_report',
+            )
+            st.caption(
+                "ダウンロードした HTML をブラウザで開き、"
+                "**Ctrl+P（Cmd+P）→ PDF として保存** でPDF出力できます。"
+            )
+
+
+# ── HTML Report builder ───────────────────────────────────────
+
+def _build_html_report(
+    df: pd.DataFrame,
+    col_info: dict,
+    freq: str = 'D',
+    selected_metrics: list | None = None,
+) -> str:
+    """Return a self-contained HTML string suitable for browser printing / PDF save."""
+
+    numeric_cols = col_info.get('numeric', [])
+    date_col = col_info['date'][0] if col_info['date'] else None
+    category_cols = col_info.get('category', [])
+
+    metrics = selected_metrics or numeric_cols[:5]
+
+    # ── KPI section ──────────────────────────────────────────
+    kpi_html = ""
+    for col in metrics:
+        try:
+            series = pd.to_numeric(df[col], errors='coerce').dropna()
+            val = float(series.mean()) if not series.empty else float('nan')
+            kpi_html += (
+                f'<div class="kpi-card">'
+                f'<div class="kpi-label">{col}</div>'
+                f'<div class="kpi-value">{_fmt_value(val)}</div>'
+                f'<div class="kpi-sub">平均</div>'
+                f'</div>'
+            )
+        except Exception:
+            pass
+
+    # ── Chart section ─────────────────────────────────────────
+    charts_html = ""
+    if date_col and metrics:
+        value_col = metrics[0]
+        group_col = category_cols[0] if category_cols else None
+        fig = render_timeseries_chart(df, date_col, value_col, group_col, freq)
+        if fig is not None:
+            fig.update_layout(
+                paper_bgcolor='white',
+                plot_bgcolor='white',
+                font_color='#111827',
+                margin=dict(t=40, b=40, l=40, r=20),
+            )
+            charts_html += (
+                '<h2 class="section-title">トレンドチャート</h2>'
+                + fig.to_html(include_plotlyjs='cdn', full_html=False)
+            )
+
+    if category_cols and metrics:
+        cat_col = category_cols[0]
+        value_col = metrics[0]
+        fig2 = render_category_chart(df, cat_col, value_col, '平均')
+        if fig2 is not None:
+            fig2.update_layout(
+                paper_bgcolor='white',
+                plot_bgcolor='white',
+                font_color='#111827',
+                margin=dict(t=40, b=40, l=40, r=20),
+            )
+            charts_html += (
+                '<h2 class="section-title">カテゴリ別集計</h2>'
+                + fig2.to_html(include_plotlyjs=False, full_html=False)
+            )
+
+    # ── Data summary table ────────────────────────────────────
+    summary_html = ""
+    if metrics:
+        try:
+            summary = df[metrics].describe().round(3)
+            summary_html = (
+                '<h2 class="section-title">統計サマリー</h2>'
+                + summary.to_html(classes='summary-table', border=0)
+            )
+        except Exception:
+            pass
+
+    generated_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分析レポート — {generated_at}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: 'Inter', sans-serif; color: #111827; background: #fff; padding: 32px; }}
+  h1 {{ font-size: 22px; font-weight: 700; color: #111827; margin-bottom: 4px; }}
+  .meta {{ font-size: 12px; color: #6b7280; margin-bottom: 24px; }}
+  .section-title {{
+    font-size: 15px; font-weight: 600; color: #111827;
+    border-left: 4px solid #2563EB; padding-left: 10px;
+    margin: 28px 0 14px 0;
+  }}
+  .kpi-row {{ display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }}
+  .kpi-card {{
+    flex: 1; min-width: 120px; max-width: 200px;
+    padding: 14px 16px; background: #fff;
+    border-radius: 10px; border-left: 4px solid #2563EB;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+  }}
+  .kpi-label {{ font-size: 11px; color: #6b7280; font-weight: 500; }}
+  .kpi-value {{ font-size: 20px; font-weight: 700; color: #111827; margin: 4px 0 2px; }}
+  .kpi-sub {{ font-size: 10px; color: #9ca3af; }}
+  .summary-table {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+  .summary-table th, .summary-table td {{
+    border: 1px solid #e5e7eb; padding: 6px 10px; text-align: right;
+  }}
+  .summary-table th {{ background: #f9fafb; font-weight: 600; text-align: left; }}
+  footer {{ font-size: 11px; color: #9ca3af; margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 12px; }}
+  @media print {{
+    body {{ padding: 16px; }}
+    .kpi-card {{ box-shadow: none; border: 1px solid #e5e7eb; }}
+    footer {{ position: fixed; bottom: 0; width: 100%; }}
+  }}
+</style>
+</head>
+<body>
+  <h1>生産データ分析レポート</h1>
+  <p class="meta">生成日時: {generated_at} &nbsp;|&nbsp; 対象行数: {len(df):,} 行</p>
+
+  <h2 class="section-title">KPI サマリー</h2>
+  <div class="kpi-row">{kpi_html}</div>
+
+  {charts_html}
+  {summary_html}
+
+  <footer>このレポートは CSV データ分析ダッシュボードにより自動生成されました。</footer>
+</body>
+</html>"""
+
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
@@ -1274,7 +1441,7 @@ def main() -> None:
     with tabs[3]:
         _tab_correlation(df, col_info)
     with tabs[4]:
-        _tab_data(df)
+        _tab_data(df, col_info, freq)
 
     if auto_refresh:
         time.sleep(refresh_interval)
