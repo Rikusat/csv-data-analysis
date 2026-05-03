@@ -102,8 +102,23 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
     if pd.api.types.is_datetime64_any_dtype(series):
         return True
 
-    # Numeric dtype columns (e.g. UPTIME_PCT) are never dates
+    # Numeric dtype: only allow Unix timestamps when column name contains a date keyword
     if pd.api.types.is_numeric_dtype(series):
+        if (pd.api.types.is_integer_dtype(series)
+                and any(kw in col_lower for kw in DATE_KEYWORDS)):
+            sample = series.dropna().head(100)
+            if len(sample) > 0:
+                try:
+                    smin, smax = int(sample.min()), int(sample.max())
+                    # Unix timestamp range: ~2001-01-01 to ~2100-01-01 in seconds
+                    if 978307200 <= smin and smax <= 4102444800:
+                        converted = pd.to_datetime(sample, unit='s', errors='coerce')
+                        valid = converted.dropna()
+                        if (len(valid) / len(sample) >= 0.8
+                                and valid.dt.year.between(2001, 2100).all()):
+                            return True
+                except Exception:
+                    pass
         return False
 
     if any(kw in col_lower for kw in DATE_KEYWORDS):
@@ -134,12 +149,25 @@ def _is_date_column(series: pd.Series, col_lower: str) -> bool:
 
 def _is_numeric_column(series: pd.Series, col_lower: str) -> bool:
     if pd.api.types.is_numeric_dtype(series):
+        # Binary flag columns (only 0 and 1) → hand off to category classification
+        unique_vals = set(series.dropna().unique())
+        if unique_vals <= {0, 1}:
+            return False
+        # Very low cardinality integers without a numeric keyword → likely a status/code
+        if (pd.api.types.is_integer_dtype(series)
+                and series.nunique() <= 5
+                and not any(kw in col_lower for kw in NUMERIC_KEYWORDS)):
+            return False
         return True
 
     if pd.api.types.is_string_dtype(series):
+        # Preserve leading-zero strings (codes, lot IDs, part numbers, zip codes)
+        non_null = series.dropna()
+        if non_null.astype(str).str.strip().str.match(r'^0\d').any():
+            return False
         try:
-            converted = pd.to_numeric(series.dropna(), errors='coerce')
-            total = series.dropna().shape[0]
+            converted = pd.to_numeric(non_null, errors='coerce')
+            total = non_null.shape[0]
             if total > 0 and (converted.notna().sum() / total) >= 0.8:
                 return True
         except Exception:
@@ -151,11 +179,19 @@ def _is_numeric_column(series: pd.Series, col_lower: str) -> bool:
 def _is_category_column(series: pd.Series, col_lower: str) -> bool:
     if series.dropna().empty:
         return False
+
+    n_unique = series.nunique()
+
+    # Category keywords apply to any dtype; cap at 200 unique to avoid flooding UI filters
     if any(kw in col_lower for kw in CATEGORY_KEYWORDS):
+        if n_unique <= 200:
+            return True
+
+    # Low-cardinality numeric (int or float) → binary flag, status code, or small enum
+    if pd.api.types.is_numeric_dtype(series) and n_unique <= 10:
         return True
 
     if pd.api.types.is_string_dtype(series):
-        n_unique = series.nunique()
         n_total = series.shape[0]
         if n_unique <= 20:
             return True

@@ -143,6 +143,9 @@ def _try_parse_numeric(series: pd.Series) -> pd.Series:
     non_null = series.dropna()
     if len(non_null) == 0:
         return series
+    # Preserve leading-zero strings — they are codes/IDs (e.g. "001", "00123"), not numbers
+    if non_null.astype(str).str.strip().str.match(r'^0\d').any():
+        return series
     direct = pd.to_numeric(non_null, errors='coerce')
     if direct.notna().sum() / len(non_null) >= 0.8:
         return pd.to_numeric(series, errors='coerce')
@@ -167,6 +170,25 @@ def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             seen[c] = 1
             clean.append(c)
     df.columns = clean
+
+    # Convert YYYYMMDD integer columns to datetime (e.g. 20240115 \u2192 2024-01-15)
+    for col in df.columns:
+        if not pd.api.types.is_integer_dtype(df[col]):
+            continue
+        s = df[col].dropna()
+        if len(s) == 0:
+            continue
+        try:
+            smin, smax = int(s.min()), int(s.max())
+            str_s = s.astype(str)
+            if 19000101 <= smin and smax <= 21001231 and str_s.str.len().max() == 8:
+                converted = pd.to_datetime(str_s, format='%Y%m%d', errors='coerce')
+                if converted.notna().mean() >= 0.8:
+                    as_str = df[col].astype(str).str.replace(r'\.0$', '', regex=True)
+                    df[col] = pd.to_datetime(as_str, format='%Y%m%d', errors='coerce')
+        except Exception:
+            pass
+
     # include both legacy object dtype and pandas 3.x StringDtype
     for col in df.select_dtypes(include=['object', 'string']).columns:
         df[col] = _try_parse_numeric(df[col])
