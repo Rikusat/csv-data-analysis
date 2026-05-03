@@ -316,6 +316,15 @@ def _render_sidebar():
         f"**行数:** {len(df_raw):,}　**列数:** {df_raw.shape[1]}"
     )
 
+    if is_demo:
+        st.sidebar.download_button(
+            "⬇️ デモデータを CSV でダウンロード",
+            data=df_raw.to_csv(index=False).encode("utf-8-sig"),
+            file_name="demo_semiconductor.csv",
+            mime="text/csv",
+            help="このサンプルデータを CSV として保存できます。自分のデータを用意する際のフォーマット参考にどうぞ。",
+        )
+
     if not is_demo:
         with st.sidebar.expander("📄 データプレビュー（先頭5行）", expanded=False):
             st.dataframe(df_raw.head(5), use_container_width=True)
@@ -1599,13 +1608,23 @@ def main() -> None:
         st.sidebar.caption(f"絞り込み後: {len(df):,} 行 / {len(df_raw):,} 行")
 
     if is_demo:
-        st.markdown(
-            '<div class="demo-banner">'
-            '🔵 半導体工場サンプルデータを表示中です。'
-            'サイドバーから実データ CSV をアップロードすると切り替わります。'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        col_banner, col_dl = st.columns([5, 1])
+        with col_banner:
+            st.markdown(
+                '<div class="demo-banner">'
+                '🔵 半導体工場サンプルデータを表示中です。'
+                'サイドバーから実データ CSV をアップロードすると切り替わります。'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        with col_dl:
+            st.download_button(
+                "⬇️ CSV",
+                data=df_raw.to_csv(index=False).encode("utf-8-sig"),
+                file_name="demo_semiconductor.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
     if len(df) > 100_000:
         st.warning(
