@@ -755,6 +755,9 @@ def _render_achievement_card(label: str, actual: float, target: float, agg_metho
 # ── Tab renderers ─────────────────────────────────────────────
 
 def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
+    if df.empty:
+        st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
+        return
     st.markdown('<p class="section-title">主要 KPI</p>', unsafe_allow_html=True)
 
     agg_method = st.selectbox(
@@ -828,6 +831,9 @@ def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
 
 def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
+    if df.empty:
+        st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
+        return
     if not col_info['date']:
         st.info("日付列が検出されませんでした。CSVに日付列を含めてください。")
         return
@@ -1100,6 +1106,9 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
 
 def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
+    if df.empty:
+        st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
+        return
     if not col_info['category']:
         st.info("カテゴリ列が検出されませんでした。")
         return
@@ -1317,6 +1326,9 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
 
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
+    if df.empty:
+        st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
+        return
     if len(col_info['numeric']) < 2:
         st.info("相関分析には数値列が 2 列以上必要です。")
         return
@@ -1355,6 +1367,9 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
 
 
 def _tab_data(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
+    if df.empty:
+        st.info("フィルター条件に一致するデータがありません。サイドバーの条件を緩めてください。")
+        return
     c1, c2 = st.columns([3, 1])
     with c1:
         selected_cols = st.multiselect(
