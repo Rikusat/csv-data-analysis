@@ -340,6 +340,51 @@ def _apply_overlay_lines(fig, target, usl, lsl) -> None:
         )
 
 
+# ── Period comparison helpers ────────────────────────────────
+
+_COMP_OFFSET = {
+    'D':  lambda n: pd.Timedelta(days=n),
+    'W':  lambda n: pd.Timedelta(weeks=n),
+    'ME': lambda n: pd.DateOffset(months=n),
+    'YE': lambda n: pd.DateOffset(years=n),
+}
+_COMP_UNIT    = {'D': '日', 'W': '週', 'ME': 'ヶ月', 'YE': '年'}
+_COMP_DEFAULT = {'D': 30,   'W': 8,    'ME': 6,      'YE': 2}
+
+
+def _build_comparison_df(
+    df: pd.DataFrame,
+    date_col: str,
+    freq: str,
+    n_periods: int,
+) -> pd.DataFrame:
+    """
+    Return a DataFrame with '_period' label ('今期'/'前期') for overlay comparison.
+    Previous-period dates are shifted forward by one period so both align on the same X axis.
+    """
+    try:
+        dates = pd.to_datetime(df[date_col], errors='coerce')
+        max_date = dates.max()
+        if pd.isna(max_date):
+            return pd.DataFrame()
+
+        offset = _COMP_OFFSET.get(freq, lambda n: pd.Timedelta(days=n))(n_periods)
+
+        current_start = max_date - offset
+        prev_start    = current_start - offset
+
+        curr_df = df[dates > current_start].copy()
+        curr_df['_period'] = '今期'
+
+        prev_df = df[(dates > prev_start) & (dates <= current_start)].copy()
+        prev_df['_period'] = '前期'
+        prev_df[date_col] = pd.to_datetime(prev_df[date_col], errors='coerce') + offset
+
+        return pd.concat([curr_df, prev_df], ignore_index=True)
+    except Exception:
+        return pd.DataFrame()
+
+
 # ── SPC outlier helper ───────────────────────────────────────
 
 def _calc_spc_outliers(
@@ -688,6 +733,45 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
             f"「{pb_metric}」の期間集計バーチャートを生成できませんでした。"
             "日付列と数値列を確認してください。"
         )
+
+    # ── 前期比較モード ────────────────────────────────────────
+    st.markdown('<p class="section-title">前期比較モード</p>', unsafe_allow_html=True)
+
+    cmp1, cmp2, cmp3 = st.columns(3)
+    with cmp1:
+        cmp_metric = st.selectbox("比較指標", col_info['numeric'], key='cmp_metric')
+    with cmp2:
+        cmp_n = st.number_input(
+            f"比較期間（{_COMP_UNIT.get(freq, '期')}単位）",
+            min_value=1, max_value=365,
+            value=_COMP_DEFAULT.get(freq, 30),
+            step=1, key='cmp_n',
+            help="今期・前期それぞれの期間長。サイドバーの集計粒度と同じ単位です。",
+        )
+    with cmp3:
+        cmp_agg = st.selectbox("集計方法", ['平均', '合計', '最大', '最小'], key='cmp_agg')
+        cmp_agg_en = {'平均': 'mean', '合計': 'sum', '最大': 'max', '最小': 'min'}[cmp_agg]
+
+    cmp_df = _build_comparison_df(df, date_col, freq, int(cmp_n))
+    if cmp_df.empty:
+        st.info("前期比較を表示できませんでした。日付列と十分なデータ量を確認してください。")
+    else:
+        fig_cmp = render_timeseries_chart(
+            cmp_df, date_col, col_info['numeric'],
+            group_col='_period',
+            selected_metrics=[cmp_metric],
+            agg_method=cmp_agg_en,
+            freq=freq,
+        )
+        if fig_cmp:
+            unit = _COMP_UNIT.get(freq, '期')
+            st.plotly_chart(fig_cmp, use_container_width=True)
+            st.caption(
+                f"今期（直近 {int(cmp_n)} {unit}）と前期（その前の {int(cmp_n)} {unit}）を同一軸で比較。"
+                "前期の日付は今期の日付軸に揃えてシフトしています。"
+            )
+        else:
+            st.error("前期比較グラフを生成できませんでした。データを確認してください。")
 
 
 def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
