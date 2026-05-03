@@ -198,13 +198,27 @@ def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data
-def _load_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
+def _get_excel_sheets(file_bytes: bytes) -> list:
+    """Return sheet names from an Excel file."""
+    try:
+        xl = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
+        return xl.sheet_names
+    except Exception:
+        return []
+
+
+@st.cache_data
+def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFrame:
     """Load CSV or Excel. Auto-detects encoding and delimiter. Returns clean DataFrame."""
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'csv'
 
     if ext in ('xlsx', 'xls'):
         try:
-            df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
+            df = pd.read_excel(
+                io.BytesIO(file_bytes),
+                engine='openpyxl',
+                sheet_name=sheet_name if sheet_name is not None else 0,
+            )
             return _normalize_dataframe(df)
         except Exception as exc:
             raise ValueError(f"Excelファイルの読み込みに失敗しました: {exc}") from exc
@@ -281,19 +295,38 @@ def _render_sidebar():
                 f"合計ファイルサイズが大きいです（{_total_bytes / 1024 / 1024:.0f} MB）。"
                 "読み込みに時間がかかる場合があります。"
             )
+
+        # Pass 1: read bytes and show sheet selectors for Excel files
+        file_queue = []
+        for f in uploaded_list:
+            raw_bytes = f.read()
+            sheet_name = None
+            if f.name.lower().rsplit('.', 1)[-1] in ('xlsx', 'xls'):
+                sheets = _get_excel_sheets(raw_bytes)
+                if len(sheets) > 1:
+                    sheet_name = st.sidebar.selectbox(
+                        f"📊 {f.name} — シート選択",
+                        sheets,
+                        key=f'sheet_{f.name}',
+                    )
+                elif sheets:
+                    sheet_name = sheets[0]
+            file_queue.append((raw_bytes, f.name, sheet_name))
+
+        # Pass 2: load DataFrames
         with st.spinner("ファイルを読み込み中..."):
             loaded_dfs: list[pd.DataFrame] = []
-            for f in uploaded_list:
+            for raw_bytes, fname, sheet_name in file_queue:
                 try:
-                    raw_bytes = f.read()
-                    df_f = _load_file(raw_bytes, f.name).copy()
-                    if len(uploaded_list) > 1:
-                        df_f['_source'] = f.name
+                    df_f = _load_file(raw_bytes, fname, sheet_name=sheet_name).copy()
+                    if len(file_queue) > 1:
+                        df_f['_source'] = fname
                     loaded_dfs.append(df_f)
                     size_mb = len(raw_bytes) / 1024 / 1024
-                    st.sidebar.caption(f"📄 {f.name}  ({size_mb:.1f} MB, {len(df_f):,} 行)")
+                    sheet_label = f" [{sheet_name}]" if sheet_name else ""
+                    st.sidebar.caption(f"📄 {fname}{sheet_label}  ({size_mb:.1f} MB, {len(df_f):,} 行)")
                 except ValueError as exc:
-                    st.sidebar.error(f"{f.name}: {exc}")
+                    st.sidebar.error(f"{fname}: {exc}")
 
             if not loaded_dfs:
                 df_raw = _demo_data()
