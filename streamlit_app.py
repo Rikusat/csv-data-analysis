@@ -305,6 +305,41 @@ def _render_sidebar():
     return df_raw, col_info, is_demo, freq
 
 
+# ── Overlay helpers ───────────────────────────────────────────
+
+def _parse_float(s: str):
+    """Return float from string, or None for empty / non-numeric input."""
+    try:
+        return float(s.strip()) if s and s.strip() else None
+    except ValueError:
+        return None
+
+
+def _apply_overlay_lines(fig, target, usl, lsl) -> None:
+    """Add target / spec-limit horizontal lines to a Plotly figure."""
+    if target is not None:
+        fig.add_hline(
+            y=target, line_color='#10b981', line_dash='solid', line_width=1.5,
+            annotation_text=f'目標: {target:g}',
+            annotation_position='top left',
+            annotation_font=dict(color='#10b981', size=11),
+        )
+    if usl is not None:
+        fig.add_hline(
+            y=usl, line_color='#ef4444', line_dash='dot', line_width=1.5,
+            annotation_text=f'USL: {usl:g}',
+            annotation_position='top right',
+            annotation_font=dict(color='#ef4444', size=11),
+        )
+    if lsl is not None:
+        fig.add_hline(
+            y=lsl, line_color='#ef4444', line_dash='dot', line_width=1.5,
+            annotation_text=f'LSL: {lsl:g}',
+            annotation_position='bottom right',
+            annotation_font=dict(color='#ef4444', size=11),
+        )
+
+
 # ── Tab renderers ─────────────────────────────────────────────
 
 def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
@@ -349,6 +384,19 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
     date_col = col_info['date'][0]
 
+    # ── 目標線・規格線の設定 ──────────────────────────────────
+    with st.expander("📏 目標線・規格線の設定（トレンドグラフ・SPC に適用）", expanded=False):
+        ol1, ol2, ol3 = st.columns(3)
+        with ol1:
+            target_str = st.text_input("目標値", key='ol_target', placeholder="例: 95.0（空欄で非表示）")
+        with ol2:
+            usl_str = st.text_input("規格上限 (USL)", key='ol_usl', placeholder="例: 100.0")
+        with ol3:
+            lsl_str = st.text_input("規格下限 (LSL)", key='ol_lsl', placeholder="例: 90.0")
+    target_val = _parse_float(target_str)
+    usl_val    = _parse_float(usl_str)
+    lsl_val    = _parse_float(lsl_str)
+
     # ── トレンドグラフ ────────────────────────────────────────
     st.markdown('<p class="section-title">トレンドグラフ</p>', unsafe_allow_html=True)
 
@@ -373,6 +421,10 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     else:
         fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq)
         if fig:
+            if any(v is not None for v in (target_val, usl_val, lsl_val)):
+                if len(selected_metrics) > 1:
+                    st.caption("📏 目標線・規格線は指標を1つ選択しているときに正確に適用されます。複数指標では Y 軸スケールが混在します。")
+                _apply_overlay_lines(fig, target_val, usl_val, lsl_val)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.error("グラフを生成できませんでした。データを確認してください。")
@@ -392,6 +444,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
     fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
     if fig_spc:
+        _apply_overlay_lines(fig_spc, target_val, usl_val, lsl_val)
         st.plotly_chart(fig_spc, use_container_width=True)
         st.caption("🔴 赤×印: 中心値 ± 3σ を超えた管理外点。工程異常の可能性があります。CL=中心線, UCL/LCL=上下管理限界。グループ指定時は各グループで独立した制御限界を適用しています。")
     else:
