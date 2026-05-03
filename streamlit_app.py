@@ -210,6 +210,9 @@ def _get_excel_sheets(file_bytes: bytes) -> list:
 @st.cache_data
 def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFrame:
     """Load CSV or Excel. Auto-detects encoding and delimiter. Returns clean DataFrame."""
+    if not file_bytes or not file_bytes.strip():
+        raise ValueError("ファイルが空です。データが含まれているファイルを選択してください。")
+
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'csv'
 
     if ext in ('xlsx', 'xls'):
@@ -219,7 +222,16 @@ def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFram
                 engine='openpyxl',
                 sheet_name=sheet_name if sheet_name is not None else 0,
             )
-            return _normalize_dataframe(df)
+            df = _normalize_dataframe(df)
+            if df.empty:
+                sheet_label = f"（シート: {sheet_name}）" if sheet_name else ""
+                raise ValueError(
+                    f"データ行がありません{sheet_label}。"
+                    "ヘッダー行のみのシートはサポートされていません。"
+                )
+            return df
+        except ValueError:
+            raise
         except Exception as exc:
             raise ValueError(f"Excelファイルの読み込みに失敗しました: {exc}") from exc
 
@@ -242,7 +254,14 @@ def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFram
                             df = df2
                     except Exception:
                         pass
-            return _normalize_dataframe(df)
+            df = _normalize_dataframe(df)
+            if df.empty:
+                raise ValueError(
+                    "データ行がありません。ヘッダー行のみのCSVはサポートされていません。"
+                )
+            return df
+        except ValueError:
+            raise
         except Exception:
             continue
 
