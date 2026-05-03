@@ -479,10 +479,22 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         ts_agg = st.selectbox("集計方法", ['平均', '合計', '最大', '最小'], key='ts_agg')
         ts_agg_en = {'平均': 'mean', '合計': 'sum', '最大': 'max', '最小': 'min'}[ts_agg]
 
+    with st.expander("〜 移動平均の設定", expanded=False):
+        ma_c1, ma_c2 = st.columns(2)
+        with ma_c1:
+            ma_enabled = st.checkbox("移動平均を表示", key='ma_enabled')
+        with ma_c2:
+            ma_window = st.slider(
+                "ウィンドウサイズ（データ点数）",
+                min_value=2, max_value=60, value=7, step=1,
+                key='ma_window', disabled=not ma_enabled,
+            )
+    ma_windows_arg = [ma_window] if ma_enabled else None
+
     if not selected_metrics:
         st.warning("指標を1つ以上選択してください。")
     else:
-        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq)
+        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq, ma_windows=ma_windows_arg)
         if fig:
             if any(v is not None for v in (target_val, usl_val, lsl_val)):
                 if len(selected_metrics) > 1:

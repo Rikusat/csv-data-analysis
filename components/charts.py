@@ -24,6 +24,7 @@ def render_timeseries_chart(
     selected_metrics: Optional[List[str]] = None,
     agg_method: str = 'mean',
     freq: Optional[str] = None,
+    ma_windows: Optional[List[int]] = None,
 ) -> Optional[go.Figure]:
     """
     Generate a time-series line chart.
@@ -36,6 +37,7 @@ def render_timeseries_chart(
         selected_metrics: Subset of numeric_cols to plot; defaults to first 3.
         agg_method: pandas aggregation string ('mean', 'sum', 'max', 'min').
         freq: Optional pandas resample frequency ('D', 'W', 'ME', 'YE').
+        ma_windows: List of moving-average window sizes to overlay (e.g. [7, 30]).
 
     Returns:
         Plotly Figure or None on error.
@@ -66,10 +68,20 @@ def render_timeseries_chart(
             groups = sorted(df_g[group_col].dropna().unique(), key=str)
             group_colors = {grp: _COLORS[i % len(_COLORS)] for i, grp in enumerate(groups)}
 
+            # Compute moving averages per group before downsampling
+            if ma_windows:
+                df_g = df_g.sort_values([group_col, date_col])
+                for n in ma_windows:
+                    for metric in metrics:
+                        df_g[f'_ma_{n}_{metric}'] = (
+                            df_g.groupby(group_col)[metric]
+                            .transform(lambda x, _n=n: x.rolling(_n, min_periods=1).mean())
+                        )
+
             fig = go.Figure()
             for grp in groups:
                 # Downsample per group so each gets up to _MAX_POINTS, not 1/N of it
-                sub = _downsample(df_g[df_g[group_col] == grp])
+                sub = _downsample(df_g[df_g[group_col] == grp].copy())
                 color = group_colors[grp]
                 for j, metric in enumerate(metrics):
                     label = f"{grp}  {metric}" if len(metrics) > 1 else str(grp)
@@ -80,6 +92,21 @@ def render_timeseries_chart(
                         marker=dict(size=4),
                         legendgroup=str(grp),
                     )
+                    if ma_windows:
+                        for n in ma_windows:
+                            ma_col = f'_ma_{n}_{metric}'
+                            if ma_col in sub.columns:
+                                ma_label = (
+                                    f"{grp}  {metric} MA-{n}" if len(metrics) > 1
+                                    else f"{grp} MA-{n}"
+                                )
+                                fig.add_scatter(
+                                    x=sub[date_col], y=sub[ma_col],
+                                    name=ma_label, mode='lines',
+                                    line=dict(color=color, width=1.5, dash='dot'),
+                                    opacity=0.75,
+                                    legendgroup=str(grp),
+                                )
             fig.update_layout(title=f"時系列推移: {title_metrics}{freq_suffix}", template='plotly_white')
 
         else:
@@ -91,16 +118,37 @@ def render_timeseries_chart(
                 )
             else:
                 df_g = df_p.groupby(date_col, as_index=False).agg(agg_dict)
+
+            # Compute moving averages before downsampling
+            if ma_windows:
+                df_g = df_g.sort_values(date_col)
+                for n in ma_windows:
+                    for metric in metrics:
+                        df_g[f'_ma_{n}_{metric}'] = df_g[metric].rolling(n, min_periods=1).mean()
+
             df_g = _downsample(df_g)
 
             fig = go.Figure()
             for i, metric in enumerate(metrics):
+                color = _COLORS[i % len(_COLORS)]
                 fig.add_scatter(
                     x=df_g[date_col], y=df_g[metric],
                     name=metric, mode='lines+markers',
-                    line=dict(color=_COLORS[i % len(_COLORS)], width=2),
+                    line=dict(color=color, width=2),
                     marker=dict(size=4),
                 )
+                if ma_windows:
+                    for n in ma_windows:
+                        ma_col = f'_ma_{n}_{metric}'
+                        if ma_col in df_g.columns:
+                            fig.add_scatter(
+                                x=df_g[date_col], y=df_g[ma_col],
+                                name=f'{metric} MA-{n}',
+                                mode='lines',
+                                line=dict(color=color, width=1.5, dash='dot'),
+                                opacity=0.75,
+                                legendgroup=metric,
+                            )
             fig.update_layout(title=f"時系列推移: {title_metrics}{freq_suffix}", template='plotly_white')
 
         fig.update_layout(
