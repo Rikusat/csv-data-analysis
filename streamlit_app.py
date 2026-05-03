@@ -354,6 +354,36 @@ def _render_sidebar():
             del st.session_state["filter_date_range"]
         st.rerun()
 
+    # ── Condition filters ─────────────────────────────────────
+    cond_rules: list = []
+    _SKIP = '（スキップ）'
+    _NUM_OPS  = ['=', '≠', '>', '>=', '<', '<=']
+    _STR_OPS  = ['=', '≠', '含む', '含まない']
+
+    with st.sidebar.expander("🔎 条件付き行フィルター", expanded=False):
+        st.caption("列・演算子・値を指定して行を絞り込みます（AND 結合）。")
+        n_rules = int(st.number_input(
+            "ルール数", min_value=1, max_value=5, value=1, step=1, key='cond_n_rules'
+        ))
+        col_opts = [_SKIP] + df_raw.columns.tolist()
+        for i in range(n_rules):
+            rc1, rc2, rc3 = st.columns([3, 2, 3])
+            with rc1:
+                col_sel = st.selectbox('列', col_opts, key=f'cond_col_{i}', label_visibility='collapsed')
+            if col_sel == _SKIP:
+                continue
+            is_num = col_sel in col_info.get('numeric', [])
+            ops = _NUM_OPS if is_num else _STR_OPS
+            with rc2:
+                op_sel = st.selectbox('演算子', ops, key=f'cond_op_{i}', label_visibility='collapsed')
+            with rc3:
+                val_sel = st.text_input('値', key=f'cond_val_{i}', label_visibility='collapsed')
+            if val_sel.strip():
+                cond_rules.append((col_sel, op_sel, val_sel.strip()))
+
+        if cond_rules:
+            st.caption(f"✅ {len(cond_rules)} 件のルールが有効")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚡ 自動更新")
     auto_refresh = st.sidebar.checkbox("自動更新を有効にする", key='auto_refresh')
@@ -368,7 +398,50 @@ def _render_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"🕐 最終更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval
+    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules
+
+
+# ── Condition filter helper ───────────────────────────────────
+
+def _apply_condition_filters(df: pd.DataFrame, rules: list) -> pd.DataFrame:
+    """Apply a list of (col, op, val_str) condition rules to df."""
+    for col, op, val_str in rules:
+        if col not in df.columns:
+            continue
+        try:
+            series_num = pd.to_numeric(df[col], errors='coerce')
+            val_num = pd.to_numeric(val_str, errors='coerce')
+            if op in ('>', '>=', '<', '<=') or pd.notna(val_num):
+                val = float(val_num) if pd.notna(val_num) else None
+                if op == '=' and val is not None:
+                    df = df[series_num == val]
+                elif op == '≠' and val is not None:
+                    df = df[series_num != val]
+                elif op == '>' and val is not None:
+                    df = df[series_num > val]
+                elif op == '>=' and val is not None:
+                    df = df[series_num >= val]
+                elif op == '<' and val is not None:
+                    df = df[series_num < val]
+                elif op == '<=' and val is not None:
+                    df = df[series_num <= val]
+                elif op == '含む':
+                    df = df[df[col].astype(str).str.contains(val_str, na=False, regex=False)]
+                elif op == '含まない':
+                    df = df[~df[col].astype(str).str.contains(val_str, na=False, regex=False)]
+            else:
+                col_str = df[col].astype(str)
+                if op == '=':
+                    df = df[col_str == val_str]
+                elif op == '≠':
+                    df = df[col_str != val_str]
+                elif op == '含む':
+                    df = df[col_str.str.contains(val_str, na=False, regex=False)]
+                elif op == '含まない':
+                    df = df[~col_str.str.contains(val_str, na=False, regex=False)]
+        except Exception:
+            pass
+    return df
 
 
 # ── Overlay helpers ───────────────────────────────────────────
@@ -1467,13 +1540,15 @@ def _build_html_report(
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
-    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval = _render_sidebar()
+    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules = _render_sidebar()
 
     date_col = col_info['date'][0] if col_info['date'] else None
     date_range = render_date_filter(df_raw, date_col) if date_col else None
     cat_selections = render_category_filters(df_raw, col_info['category'])
 
     df = apply_filters(df_raw, cat_selections, date_range, date_col)
+    if cond_rules:
+        df = _apply_condition_filters(df, cond_rules)
     if len(df) < len(df_raw):
         st.sidebar.caption(f"絞り込み後: {len(df):,} 行 / {len(df_raw):,} 行")
 
