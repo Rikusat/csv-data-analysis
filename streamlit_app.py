@@ -4,7 +4,9 @@ Entry point — run with: streamlit run streamlit_app.py
 """
 
 import csv
+import html as _html
 import io
+import re
 import time
 from datetime import datetime
 
@@ -687,6 +689,11 @@ def _cpk_color_label(cpk):
     return '#ef4444', '要改善'
 
 
+def _safe_filename(s: str) -> str:
+    """Strip characters that are invalid in filenames on Windows/Linux."""
+    return re.sub(r'[\\/:*?"<>|\s]+', '_', s).strip('_') or 'col'
+
+
 def _cap_card(label: str, value: str, sub: str, border_color: str) -> str:
     css = (
         f"padding:16px;background:#fff;border-radius:12px;"
@@ -695,9 +702,9 @@ def _cap_card(label: str, value: str, sub: str, border_color: str) -> str:
     )
     return (
         f'<div style="{css}">'
-        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">{label}</p>'
-        f'<p style="color:#111827;font-size:22px;font-weight:700;margin:6px 0 0 0;">{value}</p>'
-        f'<p style="color:#9ca3af;font-size:11px;margin:2px 0 0 0;">{sub}</p>'
+        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">{_html.escape(label)}</p>'
+        f'<p style="color:#111827;font-size:22px;font-weight:700;margin:6px 0 0 0;">{_html.escape(value)}</p>'
+        f'<p style="color:#9ca3af;font-size:11px;margin:2px 0 0 0;">{_html.escape(sub)}</p>'
         f'</div>'
     )
 
@@ -752,7 +759,7 @@ def _render_achievement_card(label: str, actual: float, target: float, agg_metho
     )
     return (
         f'<div style="{css}">'
-        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">🎯 {label}</p>'
+        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">🎯 {_html.escape(label)}</p>'
         f'<p style="color:#111827;font-size:22px;font-weight:700;margin:6px 0 0 0;">{rate:.1f}%</p>'
         f'<p style="color:{color};font-size:12px;margin:2px 0 0 0;">{badge}</p>'
         f'<p style="color:#9ca3af;font-size:11px;margin:4px 0 0 0;">'
@@ -953,7 +960,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         st.download_button(
             "⬇️ 異常点 CSV ダウンロード",
             data=outliers_df.to_csv(index=False).encode('utf-8-sig'),
-            file_name=f"spc_outliers_{spc_metric}.csv",
+            file_name=f"spc_outliers_{_safe_filename(spc_metric)}.csv",
             mime="text/csv",
             key='dl_outliers',
         )
@@ -1104,7 +1111,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
                 st.download_button(
                     "⬇️ 前期比トレンド表 CSV",
                     data=pivot_tbl.to_csv(index=False).encode('utf-8-sig'),
-                    file_name=f"trend_comparison_{cmp_metric}.csv",
+                    file_name=f"trend_comparison_{_safe_filename(cmp_metric)}.csv",
                     mime="text/csv",
                     key='dl_trend_cmp',
                 )
@@ -1326,7 +1333,7 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
             st.download_button(
                 "⬇️ ランキング CSV ダウンロード",
                 data=ranked.to_csv(index=False).encode('utf-8-sig'),
-                file_name=f"ranking_{rk_cat}_{rk_val}.csv",
+                file_name=f"ranking_{_safe_filename(rk_cat)}_{_safe_filename(rk_val)}.csv",
                 mime="text/csv",
                 key='dl_ranking',
             )
@@ -1542,7 +1549,7 @@ def _build_html_report(df, col_info, freq='D', selected_metrics=None):
             val = float(series.mean()) if not series.empty else float('nan')
             kpi_html += (
                 f'<div class="kpi-card">'
-                f'<div class="kpi-label">{col}</div>'
+                f'<div class="kpi-label">{_html.escape(col)}</div>'
                 f'<div class="kpi-value">{_fmt_value(val)}</div>'
                 f'<div class="kpi-sub">平均</div>'
                 f'</div>'
