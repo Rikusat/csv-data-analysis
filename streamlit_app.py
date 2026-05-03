@@ -537,6 +537,24 @@ def _cap_card(label: str, value: str, sub: str, border_color: str) -> str:
     )
 
 
+# ── Chart render helper ───────────────────────────────────────
+
+def _render_chart(fig, filename: str, key: str) -> None:
+    """Render a Plotly chart and add a PNG download button below it."""
+    st.plotly_chart(fig, use_container_width=True)
+    try:
+        png_bytes = fig.to_image(format='png', width=1400, height=560, scale=2)
+        st.download_button(
+            "📷 PNG ダウンロード",
+            data=png_bytes,
+            file_name=filename,
+            mime="image/png",
+            key=key,
+        )
+    except Exception:
+        pass
+
+
 # ── Achievement card helpers ─────────────────────────────────
 
 def _fmt_value(value: float) -> str:
@@ -641,7 +659,7 @@ def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
             selected_metrics=quick_metrics, freq=freq,
         )
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            _render_chart(fig, 'overview_trend.png', 'dl_ov_trend')
 
     if col_info['category'] and col_info['numeric']:
         st.markdown(
@@ -650,7 +668,7 @@ def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         )
         fig = render_category_chart(df, col_info['category'][0], col_info['numeric'][0])
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            _render_chart(fig, 'overview_category.png', 'dl_ov_cat')
 
 
 def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
@@ -716,7 +734,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
                 if len(selected_metrics) > 1:
                     st.caption("📏 目標線・規格線は指標を1つ選択しているときに正確に適用されます。複数指標では Y 軸スケールが混在します。")
                 _apply_overlay_lines(fig, target_val, usl_val, lsl_val)
-            st.plotly_chart(fig, use_container_width=True)
+            _render_chart(fig, 'timeseries.png', 'dl_ts')
         else:
             st.error("グラフを生成できませんでした。データを確認してください。")
 
@@ -736,7 +754,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
     if fig_spc:
         _apply_overlay_lines(fig_spc, target_val, usl_val, lsl_val)
-        st.plotly_chart(fig_spc, use_container_width=True)
+        _render_chart(fig_spc, 'spc_chart.png', 'dl_spc')
         st.caption("🔴 赤×印: 中心値 ± 3σ を超えた管理外点。工程異常の可能性があります。CL=中心線, UCL/LCL=上下管理限界。グループ指定時は各グループで独立した制御限界を適用しています。")
     else:
         st.error(
@@ -826,7 +844,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
 
     fig_pb = render_period_bar_chart(df, date_col, pb_metric, freq, pb_agg, pb_group)
     if fig_pb:
-        st.plotly_chart(fig_pb, use_container_width=True)
+        _render_chart(fig_pb, 'period_bar.png', 'dl_pb')
     else:
         st.error(
             f"「{pb_metric}」の期間集計バーチャートを生成できませんでした。"
@@ -864,7 +882,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         )
         if fig_cmp:
             unit = _COMP_UNIT.get(freq, '期')
-            st.plotly_chart(fig_cmp, use_container_width=True)
+            _render_chart(fig_cmp, 'comparison.png', 'dl_cmp')
             st.caption(
                 f"今期（直近 {int(cmp_n)} {unit}）と前期（その前の {int(cmp_n)} {unit}）を同一軸で比較。"
                 "前期の日付は今期の日付軸に揃えてシフトしています。"
@@ -956,7 +974,7 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
 
     fig = render_category_chart(df, cat_col, num_col, chart_type, agg_method, top_n)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        _render_chart(fig, 'category.png', 'dl_cat')
     else:
         st.error(
             f"「{num_col}」は数値でないため集計できません。別の列を選択してください。"
@@ -983,7 +1001,7 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
 
     fig_pareto = render_pareto_chart(df, pareto_cat, pareto_num, pareto_agg, pareto_n)
     if fig_pareto:
-        st.plotly_chart(fig_pareto, use_container_width=True)
+        _render_chart(fig_pareto, 'pareto.png', 'dl_pareto')
     else:
         st.error("パレート図を生成できませんでした。カテゴリ列と数値列を確認してください。")
 
@@ -1020,7 +1038,7 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
 
         fig_shift = render_category_chart(df, shift_col, shift_metric, '棒グラフ', shift_agg, top_n=20)
         if fig_shift:
-            st.plotly_chart(fig_shift, use_container_width=True)
+            _render_chart(fig_shift, 'shift.png', 'dl_shift')
         else:
             st.error(f"「{shift_metric}」のシフト別グラフを生成できませんでした。数値列を確認してください。")
 
@@ -1079,7 +1097,7 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
             df, col_info['date'][0], hm_cat, hm_val, hm_agg, hm_freq, hm_reverse,
         )
         if fig_hm:
-            st.plotly_chart(fig_hm, use_container_width=True)
+            _render_chart(fig_hm, 'heatmap.png', 'dl_hm')
             st.caption("色が緑に近いほど良好、赤に近いほど注意が必要です（スケール反転時は逆）。直近 60 期間を表示。")
         else:
             st.error("ヒートマップを生成できませんでした。日付列・カテゴリ列・数値列を確認してください。")
@@ -1167,7 +1185,7 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
     st.markdown('<p class="section-title">散布図</p>', unsafe_allow_html=True)
     fig = render_scatter_chart(df, x_col, y_col, color_col, size_col)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        _render_chart(fig, 'scatter.png', 'dl_scatter')
 
     st.markdown(
         '<p class="section-title">プロセスパラメータ 相関ヒートマップ</p>',
@@ -1175,7 +1193,7 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
     )
     fig_hm = render_correlation_heatmap(df, col_info['numeric'])
     if fig_hm:
-        st.plotly_chart(fig_hm, use_container_width=True)
+        _render_chart(fig_hm, 'corr_heatmap.png', 'dl_corr')
     else:
         st.info("相関ヒートマップを生成できませんでした。")
 
