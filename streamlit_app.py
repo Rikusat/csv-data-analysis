@@ -5,6 +5,7 @@ Entry point — run with: streamlit run streamlit_app.py
 
 import csv
 import io
+import time
 from datetime import datetime
 
 import numpy as np
@@ -303,7 +304,21 @@ def _render_sidebar():
             del st.session_state["filter_date_range"]
         st.rerun()
 
-    return df_raw, col_info, is_demo, freq
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚡ 自動更新")
+    auto_refresh = st.sidebar.checkbox("自動更新を有効にする", key='auto_refresh')
+    refresh_interval = 30
+    if auto_refresh:
+        refresh_interval = st.sidebar.slider(
+            "更新間隔（秒）", min_value=5, max_value=300, value=30, step=5,
+            key='refresh_interval',
+        )
+        st.sidebar.caption(f"⏱️ {refresh_interval} 秒ごとにデータを再読み込みします。")
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"🕐 最終更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval
 
 
 # ── Overlay helpers ───────────────────────────────────────────
@@ -1107,7 +1122,7 @@ def _tab_data(df: pd.DataFrame) -> None:
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
-    df_raw, col_info, is_demo, freq = _render_sidebar()
+    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval = _render_sidebar()
 
     date_col = col_info['date'][0] if col_info['date'] else None
     date_range = render_date_filter(df_raw, date_col) if date_col else None
@@ -1150,6 +1165,10 @@ def main() -> None:
         _tab_correlation(df, col_info)
     with tabs[4]:
         _tab_data(df)
+
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
 
 
 if __name__ == '__main__':
