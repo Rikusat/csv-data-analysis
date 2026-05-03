@@ -521,6 +521,47 @@ def _cap_card(label: str, value: str, sub: str, border_color: str) -> str:
     )
 
 
+# ── Achievement card helpers ─────────────────────────────────
+
+def _fmt_value(value: float) -> str:
+    try:
+        if abs(value) >= 1_000_000:
+            return f"{value / 1_000_000:.2f}M"
+        if abs(value) >= 1_000:
+            return f"{value:,.1f}"
+        if abs(value - round(value)) < 1e-9:
+            return f"{round(value):,}"
+        return f"{value:.2f}"
+    except Exception:
+        return '—'
+
+
+def _render_achievement_card(label: str, actual: float, target: float, agg_method: str) -> str:
+    if target == 0:
+        return ''
+    rate = actual / target * 100
+    if rate >= 100:
+        color, badge = '#10b981', '✅ 達成'
+    elif rate >= 80:
+        color, badge = '#f59e0b', '⚠️ 接近中'
+    else:
+        color, badge = '#ef4444', '❌ 未達成'
+    css = (
+        f"padding:16px;background:#fff;border-radius:12px;"
+        f"box-shadow:0 2px 8px rgba(0,0,0,0.08);border-left:4px solid {color};"
+        f"margin-bottom:8px;"
+    )
+    return (
+        f'<div style="{css}">'
+        f'<p style="color:#6b7280;font-size:12px;margin:0;font-weight:500;">🎯 {label}</p>'
+        f'<p style="color:#111827;font-size:22px;font-weight:700;margin:6px 0 0 0;">{rate:.1f}%</p>'
+        f'<p style="color:{color};font-size:12px;margin:2px 0 0 0;">{badge}</p>'
+        f'<p style="color:#9ca3af;font-size:11px;margin:4px 0 0 0;">'
+        f'実績: {_fmt_value(actual)} / 目標: {_fmt_value(target)}&nbsp;({agg_method})</p>'
+        f'</div>'
+    )
+
+
 # ── Tab renderers ─────────────────────────────────────────────
 
 def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
@@ -531,6 +572,47 @@ def _tab_overview(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     )
     date_col = col_info['date'][0] if col_info['date'] else None
     render_kpi_cards(df, col_info['numeric'], date_col=date_col, agg_method=agg_method, freq=freq)
+
+    # ── 目標達成率 ────────────────────────────────────────────
+    st.markdown('<p class="section-title">目標達成率</p>', unsafe_allow_html=True)
+
+    with st.expander("🎯 目標値の設定（指標ごとに入力）", expanded=False):
+        tgt_metrics = col_info['numeric'][:8]
+        tgt_vals: dict = {}
+        for row_start in range(0, len(tgt_metrics), 4):
+            row_items = tgt_metrics[row_start:row_start + 4]
+            tcols = st.columns(len(row_items))
+            for j, m in enumerate(row_items):
+                with tcols[j]:
+                    s = st.text_input(m, key=f'tgt_{m}', placeholder="例: 95.0")
+                    tgt_vals[m] = _parse_float(s)
+
+    active_targets = [(m, t) for m, t in tgt_vals.items() if t is not None]
+
+    if not active_targets:
+        st.info("🎯 上の「目標値の設定」で目標値を入力すると達成率カードが表示されます。")
+    else:
+        _agg_map = {'平均': 'mean', '合計': 'sum', '最大': 'max', '最小': 'min'}
+        agg_fn = _agg_map.get(agg_method, 'mean')
+
+        for row_start in range(0, len(active_targets), 4):
+            row_items = active_targets[row_start:row_start + 4]
+            row_cols = st.columns(len(row_items))
+            for i, (metric, target) in enumerate(row_items):
+                with row_cols[i]:
+                    try:
+                        series = pd.to_numeric(df[metric], errors='coerce').dropna()
+                        actual = float(getattr(series, agg_fn)())
+                        html = _render_achievement_card(metric, actual, target, agg_method)
+                        if html:
+                            st.markdown(html, unsafe_allow_html=True)
+                    except Exception:
+                        st.error(f"「{metric}」の達成率を計算できませんでした。")
+
+        st.caption(
+            "💡 低い方が良い指標（欠陥密度・不良率など）は目標値を小さく設定し、"
+            "達成率の解釈を逆にしてください（100% 超 = 目標値以下に抑制できた状態）。"
+        )
 
     if col_info['date'] and col_info['numeric']:
         st.markdown(
