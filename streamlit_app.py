@@ -1,5 +1,5 @@
 """
-半導体工場 生産データ分析ダッシュボード
+生産データ分析ダッシュボード
 Entry point — run with: streamlit run streamlit_app.py
 """
 
@@ -31,7 +31,7 @@ from components.kpi import render_kpi_cards
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="半導体工場 生産データ分析",
+    page_title="生産データ分析ダッシュボード",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -325,7 +325,7 @@ def _to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ── Sidebar ───────────────────────────────────────────────────
 def _render_sidebar():
     """Render sidebar and return (df_raw, col_info, is_demo, freq)."""
-    st.sidebar.title("🔬 半導体工場 分析")
+    st.sidebar.title("🔬 生産データ分析")
     st.sidebar.markdown("---")
 
     uploaded_list = st.sidebar.file_uploader(
