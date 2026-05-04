@@ -6,6 +6,7 @@ Entry point — run with: streamlit run streamlit_app.py
 import csv
 import html as _html
 import io
+import json
 import re
 import time
 from datetime import datetime
@@ -210,7 +211,7 @@ def _get_excel_sheets(file_bytes: bytes) -> list:
 @st.cache_data
 def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFrame:
     """Load CSV or Excel. Auto-detects encoding and delimiter. Returns clean DataFrame."""
-    if not file_bytes or not file_bytes.strip():
+    if not file_bytes or len(file_bytes) == 0:
         raise ValueError("ファイルが空です。データが含まれているファイルを選択してください。")
 
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'csv'
@@ -268,7 +269,19 @@ def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFram
             if df.shape[1] <= 1:
                 for alt in ('\t', ';', '|'):
                     try:
-                        df2 = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=alt)
+                        if len(file_bytes) > _CHUNK_THRESHOLD:
+                            _chunks2, _rows2 = [], 0
+                            for _ch in pd.read_csv(
+                                io.BytesIO(file_bytes), encoding=enc, sep=alt,
+                                chunksize=50_000, on_bad_lines='skip',
+                            ):
+                                _chunks2.append(_ch)
+                                _rows2 += len(_ch)
+                                if _rows2 >= _SAMPLE_ROWS:
+                                    break
+                            df2 = pd.concat(_chunks2, ignore_index=True) if _chunks2 else pd.DataFrame()
+                        else:
+                            df2 = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=alt)
                         if df2.shape[1] > df.shape[1]:
                             df = df2
                     except Exception:
@@ -404,6 +417,24 @@ def _render_sidebar():
 
     st.sidebar.markdown("---")
 
+    # Apply stored calc-column specs BEFORE detect_columns so new columns appear in col_info
+    _calc_specs_stored = st.session_state.get('_calc_specs', [])
+    if _calc_specs_stored:
+        df_raw = df_raw.copy()
+        _op_fn = {'+': lambda a, b: a + b, '-': lambda a, b: a - b,
+                  '×': lambda a, b: a * b, '÷': lambda a, b: a / b}
+        for _sp in _calc_specs_stored:
+            try:
+                if _sp['lhs'] not in df_raw.columns:
+                    continue
+                _l = pd.to_numeric(df_raw[_sp['lhs']], errors='coerce')
+                _r = (pd.to_numeric(df_raw[_sp['rhs_col']], errors='coerce')
+                      if _sp.get('rhs_col') and _sp['rhs_col'] in df_raw.columns
+                      else float(_sp.get('rhs_const') or 1.0))
+                df_raw[_sp['name']] = _op_fn[_sp['op']](_l, _r)
+            except Exception:
+                pass
+
     col_info = _detect_columns(df_raw)
 
     # ── Column role overrides ─────────────────────────────────
@@ -476,23 +507,19 @@ def _render_sidebar():
                 key='calc_new_col',
             ).strip()
             if st.button("列を追加", key='calc_add_btn') and _new_col_name:
-                try:
-                    lhs_s = pd.to_numeric(df_raw[_lhs], errors='coerce')
-                    rhs_s = pd.to_numeric(df_raw[_rhs_col], errors='coerce') if _rhs_col else float(_rhs_const)
-                    _op_map = {'+': lhs_s + rhs_s, '-': lhs_s - rhs_s,
-                               '×': lhs_s * rhs_s, '÷': lhs_s / rhs_s}
-                    df_raw = df_raw.copy()
-                    df_raw[_new_col_name] = _op_map[_op]
-                    if _new_col_name not in col_info['numeric']:
-                        col_info['numeric'].append(_new_col_name)
-                    st.session_state[f'_calc_col_{_new_col_name}'] = True
-                    st.success(f"列「{_new_col_name}」を追加しました。")
-                except Exception as e:
-                    st.error(f"計算列の追加に失敗しました: {e}")
+                _specs_list = st.session_state.get('_calc_specs', [])
+                _specs_list = [s for s in _specs_list if s['name'] != _new_col_name]
+                _specs_list.append({'name': _new_col_name, 'lhs': _lhs, 'op': _op,
+                                    'rhs_col': _rhs_col, 'rhs_const': _rhs_const})
+                st.session_state['_calc_specs'] = _specs_list
+                st.success(f"列「{_new_col_name}」を追加しました。")
             # 追加済み列の一覧
-            added = [k.replace('_calc_col_', '') for k in st.session_state if k.startswith('_calc_col_')]
-            if added:
-                st.caption("追加済み: " + ", ".join(f"`{c}`" for c in added))
+            _stored_specs = st.session_state.get('_calc_specs', [])
+            if _stored_specs:
+                st.caption("追加済み: " + ", ".join(f"`{s['name']}`" for s in _stored_specs))
+                if st.button("追加列をリセット", key='calc_reset_btn'):
+                    st.session_state['_calc_specs'] = []
+                    st.rerun()
 
     # ── C-5: 日付フォーマット手動指定 ────────────────────────
     custom_date_fmt = None
@@ -588,8 +615,7 @@ def _render_sidebar():
             if _fv and _fv != 'すべて':
                 _fstate['category'][_fc] = _fv
 
-        import json as _json
-        _state_json = _json.dumps(_fstate, ensure_ascii=False, indent=2)
+        _state_json = json.dumps(_fstate, ensure_ascii=False, indent=2)
         st.download_button(
             "⬇️ 現在の条件を JSON でダウンロード",
             data=_state_json.encode('utf-8'),
@@ -609,18 +635,20 @@ def _render_sidebar():
         )
         if st.button("フィルターを適用", key='filter_import_btn') and _import_txt.strip():
             try:
-                _imp = _json.loads(_import_txt)
+                _imp = json.loads(_import_txt)
                 if _imp.get('date_range') and len(_imp['date_range']) == 2:
                     st.session_state['filter_date_range'] = (
                         pd.Timestamp(_imp['date_range'][0]).date(),
                         pd.Timestamp(_imp['date_range'][1]).date(),
                     )
                 for _col, _val in _imp.get('category', {}).items():
-                    st.session_state[f'filter_cat_{_col}'] = _val
+                    if _col in df_raw.columns:
+                        st.session_state[f'filter_cat_{_col}'] = _val
                 for _ri, (_rc, _ro, _rv) in enumerate(_imp.get('conditions', [])[:5]):
-                    st.session_state[f'cond_col_{_ri}'] = _rc
-                    st.session_state[f'cond_op_{_ri}']  = _ro
-                    st.session_state[f'cond_val_{_ri}'] = _rv
+                    if _rc in df_raw.columns:
+                        st.session_state[f'cond_col_{_ri}'] = _rc
+                        st.session_state[f'cond_op_{_ri}']  = _ro
+                        st.session_state[f'cond_val_{_ri}'] = _rv
                 if _imp.get('conditions'):
                     st.session_state['cond_n_rules'] = len(_imp['conditions'])
                 st.rerun()
@@ -1987,14 +2015,21 @@ def main() -> None:
     if fill_method and col_info['numeric']:
         num_cols_present = [c for c in col_info['numeric'] if c in df.columns]
         if num_cols_present:
-            if fill_method in ('ffill', 'bfill'):
-                df[num_cols_present] = df[num_cols_present].ffill() if fill_method == 'ffill' else df[num_cols_present].bfill()
+            df = df.copy()
+            if fill_method == 'ffill':
+                df.loc[:, num_cols_present] = df.loc[:, num_cols_present].ffill()
+            elif fill_method == 'bfill':
+                df.loc[:, num_cols_present] = df.loc[:, num_cols_present].bfill()
             elif fill_method == 'mean':
-                df[num_cols_present] = df[num_cols_present].fillna(df[num_cols_present].mean())
+                df.loc[:, num_cols_present] = df.loc[:, num_cols_present].fillna(
+                    df.loc[:, num_cols_present].mean()
+                )
             elif fill_method == 'median':
-                df[num_cols_present] = df[num_cols_present].fillna(df[num_cols_present].median())
+                df.loc[:, num_cols_present] = df.loc[:, num_cols_present].fillna(
+                    df.loc[:, num_cols_present].median()
+                )
             elif fill_method == 'zero':
-                df[num_cols_present] = df[num_cols_present].fillna(0)
+                df.loc[:, num_cols_present] = df.loc[:, num_cols_present].fillna(0)
 
     if len(df) < len(df_raw):
         st.sidebar.caption(f"絞り込み後: {len(df):,} 行 / {len(df_raw):,} 行")
@@ -2030,8 +2065,12 @@ def main() -> None:
         elif sample_method == 'tail':
             df = df.tail(_samp_n).reset_index(drop=True)
         elif sample_method == 'systematic':
-            step = max(1, len(df) // _samp_n)
-            df = df.iloc[::step].head(_samp_n).reset_index(drop=True)
+            step = len(df) // _samp_n
+            if step <= 1:
+                st.sidebar.warning("データ行数がサンプル数に近いため、等間隔サンプリングは先頭取得と同じ結果になります。")
+                df = df.head(_samp_n).reset_index(drop=True)
+            else:
+                df = df.iloc[::step].head(_samp_n).reset_index(drop=True)
         else:
             df = df.sample(_samp_n, random_state=42).reset_index(drop=True)
 
