@@ -429,6 +429,35 @@ def _render_sidebar():
                 for c in cols:
                     st.markdown(f"- `{c}`")
 
+    # ── C-5: 日付フォーマット手動指定 ────────────────────────
+    custom_date_fmt = None
+    if col_info['date']:
+        with st.sidebar.expander("📅 日付フォーマット指定", expanded=False):
+            st.caption("自動検出が失敗する場合に Python strptime 書式を入力してください。例: %Y/%m/%d、%d-%m-%Y")
+            _fmt_input = st.text_input(
+                "日付書式（空白=自動）",
+                value="",
+                key='custom_date_fmt',
+                help="例: %Y/%m/%d、%Y%m%d、%d.%m.%Y。空白のままにすると pandas が自動解析します。",
+            ).strip()
+            if _fmt_input:
+                custom_date_fmt = _fmt_input
+                st.caption(f"適用中: `{custom_date_fmt}`")
+
+    # ── C-6: 欠損値補完方法 ───────────────────────────────────
+    fill_method = None
+    with st.sidebar.expander("🩹 欠損値補完", expanded=False):
+        st.caption("数値列の欠損値を補完します。フィルター適用後のデータに適用されます。")
+        _fill_opts = {'補完しない': None, '前方補完 (ffill)': 'ffill', '後方補完 (bfill)': 'bfill',
+                      '平均値': 'mean', '中央値': 'median', '0 埋め': 'zero'}
+        _fill_sel = st.selectbox(
+            "補完方法",
+            list(_fill_opts.keys()),
+            key='fill_method',
+            help="ffill: 直前の有効値で補完。bfill: 直後の有効値で補完。平均/中央値: 列全体の統計値。",
+        )
+        fill_method = _fill_opts[_fill_sel]
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 集計粒度")
     freq_sel = st.sidebar.selectbox(
@@ -494,7 +523,7 @@ def _render_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"🕐 最終更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules
+    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method
 
 
 # ── Condition filter helper ───────────────────────────────────
@@ -1737,7 +1766,16 @@ def _build_html_report(df, col_info, freq='D', selected_metrics=None):
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
-    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules = _render_sidebar()
+    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method = _render_sidebar()
+
+    # C-5: 日付フォーマット手動指定
+    if custom_date_fmt and col_info['date']:
+        df_raw = df_raw.copy()
+        for _dcol in col_info['date']:
+            try:
+                df_raw[_dcol] = pd.to_datetime(df_raw[_dcol], format=custom_date_fmt, errors='coerce')
+            except Exception:
+                pass
 
     date_col = col_info['date'][0] if col_info['date'] else None
     date_range = render_date_filter(df_raw, date_col) if date_col else None
@@ -1746,6 +1784,20 @@ def main() -> None:
     df = apply_filters(df_raw, cat_selections, date_range, date_col)
     if cond_rules:
         df = _apply_condition_filters(df, cond_rules)
+
+    # C-6: 欠損値補完
+    if fill_method and col_info['numeric']:
+        num_cols_present = [c for c in col_info['numeric'] if c in df.columns]
+        if num_cols_present:
+            if fill_method in ('ffill', 'bfill'):
+                df[num_cols_present] = df[num_cols_present].ffill() if fill_method == 'ffill' else df[num_cols_present].bfill()
+            elif fill_method == 'mean':
+                df[num_cols_present] = df[num_cols_present].fillna(df[num_cols_present].mean())
+            elif fill_method == 'median':
+                df[num_cols_present] = df[num_cols_present].fillna(df[num_cols_present].median())
+            elif fill_method == 'zero':
+                df[num_cols_present] = df[num_cols_present].fillna(0)
+
     if len(df) < len(df_raw):
         st.sidebar.caption(f"絞り込み後: {len(df):,} 行 / {len(df_raw):,} 行")
 
