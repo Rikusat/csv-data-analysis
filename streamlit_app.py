@@ -393,7 +393,7 @@ def _render_sidebar():
     _ROLE_OPTS = list(_ROLE_JP.values())
 
     with st.sidebar.expander("🔧 列ロール上書き", expanded=False):
-        st.caption("自動判定が誤っている列を修正できます。")
+        st.caption("自動判定が誤っている列を修正できます。変更はグラフ・KPI・フィルターに即時反映されます。")
         ovr_cols = st.multiselect(
             "変更する列",
             df_raw.columns.tolist(),
@@ -435,7 +435,7 @@ def _render_sidebar():
         "時間粒度",
         list(_FREQ_OPTIONS.keys()),
         key='global_freq',
-        help="トレンドグラフ・期間集計バーチャート・KPI前期比に適用されます",
+        help="トレンドグラフ・SPC管理図・期間集計バーチャート・KPI前期比に適用されます。日次=生データ、週次/月次=集計値。",
     )
     freq = _FREQ_OPTIONS[freq_sel]
 
@@ -457,7 +457,7 @@ def _render_sidebar():
     _STR_OPS  = ['=', '≠', '含む', '含まない']
 
     with st.sidebar.expander("🔎 条件付き行フィルター", expanded=False):
-        st.caption("列・演算子・値を指定して行を絞り込みます（AND 結合）。")
+        st.caption("列・演算子・値を指定して行を絞り込みます（AND 結合）。日付フィルター・カテゴリフィルターと併用できます。")
         n_rules = int(st.number_input(
             "ルール数", min_value=1, max_value=5, value=1, step=1, key='cond_n_rules'
         ))
@@ -958,7 +958,8 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     if not selected_metrics:
         st.warning("指標を1つ以上選択してください。")
     else:
-        fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq, ma_windows=ma_windows_arg)
+        with st.spinner("トレンドグラフを生成中..."):
+            fig = render_timeseries_chart(df, date_col, col_info['numeric'], group_col, selected_metrics, ts_agg_en, freq=freq, ma_windows=ma_windows_arg)
         if fig:
             if any(v is not None for v in (target_val, usl_val, lsl_val)):
                 if len(selected_metrics) > 1:
@@ -966,7 +967,10 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
                 _apply_overlay_lines(fig, target_val, usl_val, lsl_val)
             _render_chart(fig, 'timeseries.png', 'dl_ts')
         else:
-            st.error("グラフを生成できませんでした。データを確認してください。")
+            st.error(
+                f"トレンドグラフを生成できませんでした。"
+                f"指標「{'、'.join(selected_metrics)}」と日付列「{date_col}」に有効なデータがあるか確認してください。"
+            )
 
     # ── SPC 管理図 ────────────────────────────────────────────
     st.markdown('<p class="section-title">SPC 管理図（±3σ 制御限界）</p>', unsafe_allow_html=True)
@@ -981,7 +985,8 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
         spc_grp_sel = st.selectbox("グループ別", spc_group_opts, key='spc_group')
         spc_group = None if spc_grp_sel == 'なし' else spc_grp_sel
 
-    fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
+    with st.spinner("SPC 管理図を生成中..."):
+        fig_spc = render_spc_chart(df, date_col, spc_metric, spc_group)
     if fig_spc:
         _apply_overlay_lines(fig_spc, target_val, usl_val, lsl_val)
         _render_chart(fig_spc, 'spc_chart.png', 'dl_spc')
@@ -989,7 +994,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
     else:
         st.error(
             f"「{spc_metric}」の SPC 管理図を生成できませんでした。"
-            "数値列を選択してください。"
+            "データ点が不足しているか、有効な数値がありません。指標や日付列を確認してください。"
         )
 
     # ── SPC 異常点サマリー ────────────────────────────────────
@@ -1118,7 +1123,10 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
                 "前期の日付は今期の日付軸に揃えてシフトしています。"
             )
         else:
-            st.error("前期比較グラフを生成できませんでした。データを確認してください。")
+            st.error(
+                f"「{cmp_metric}」の前期比較グラフを生成できませんでした。"
+                "比較期間を広げるか、日付列と数値列を確認してください。"
+            )
 
         # ── 前期比トレンド表 ─────────────────────────────────
         st.markdown("**前期比トレンド表**")
@@ -1170,7 +1178,7 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
             else:
                 st.info("今期・前期のデータが揃っていません。比較期間を広げてください。")
         except Exception:
-            st.error("前期比トレンド表の生成に失敗しました。")
+            st.error(f"「{cmp_metric}」の前期比トレンド表の生成に失敗しました。データ型を確認してください。")
 
 
 def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
@@ -1205,12 +1213,14 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
 
     top_n = st.slider("上位 N 件", min_value=3, max_value=30, value=10, key='cat_topn')
 
-    fig = render_category_chart(df, cat_col, num_col, chart_type, agg_method, top_n)
+    with st.spinner("集計グラフを生成中..."):
+        fig = render_category_chart(df, cat_col, num_col, chart_type, agg_method, top_n)
     if fig:
         _render_chart(fig, 'category.png', 'dl_cat')
     else:
         st.error(
-            f"「{num_col}」は数値でないため集計できません。別の列を選択してください。"
+            f"「{num_col}」の集計グラフを生成できませんでした。"
+            f"「{num_col}」が数値列か、「{cat_col}」にカテゴリデータがあるか確認してください。"
         )
 
     # ── パレート図 ────────────────────────────────────────────
@@ -1333,7 +1343,10 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
             _render_chart(fig_hm, 'heatmap.png', 'dl_hm')
             st.caption("色が緑に近いほど良好、赤に近いほど注意が必要です（スケール反転時は逆）。直近 60 期間を表示。")
         else:
-            st.error("ヒートマップを生成できませんでした。日付列・カテゴリ列・数値列を確認してください。")
+            st.error(
+                f"「{hm_val}」のヒートマップを生成できませんでした。"
+                f"日付列「{col_info['date'][0]}」・カテゴリ列「{hm_cat}」・数値列「{hm_val}」に有効なデータがあるか確認してください。"
+            )
 
     # ── ランキングテーブル ────────────────────────────────────
     st.markdown('<p class="section-title">ランキングテーブル</p>', unsafe_allow_html=True)
@@ -1390,7 +1403,10 @@ def _tab_category(df: pd.DataFrame, col_info: dict) -> None:
                 key='dl_ranking',
             )
     except Exception:
-        st.error("ランキングテーブルを生成できませんでした。カテゴリ列と数値列を確認してください。")
+        st.error(
+            f"ランキングテーブルを生成できませんでした。"
+            f"「{rk_cat}」がカテゴリ列、「{rk_val}」が数値列であることを確認してください。"
+        )
 
 
 def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
@@ -1427,11 +1443,15 @@ def _tab_correlation(df: pd.DataFrame, col_info: dict) -> None:
         '<p class="section-title">プロセスパラメータ 相関ヒートマップ</p>',
         unsafe_allow_html=True,
     )
-    fig_hm = render_correlation_heatmap(df, col_info['numeric'])
+    with st.spinner("相関ヒートマップを生成中..."):
+        fig_hm = render_correlation_heatmap(df, col_info['numeric'])
     if fig_hm:
         _render_chart(fig_hm, 'corr_heatmap.png', 'dl_corr')
     else:
-        st.info("相関ヒートマップを生成できませんでした。")
+        st.info(
+            f"相関ヒートマップを生成できませんでした。"
+            f"数値列が {len(col_info['numeric'])} 列あり、有効なデータが不足している可能性があります。"
+        )
 
 
 def _build_quality_summary(df: pd.DataFrame, col_info: dict) -> pd.DataFrame:
