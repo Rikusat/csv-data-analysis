@@ -429,6 +429,52 @@ def _render_sidebar():
                 for c in cols:
                     st.markdown(f"- `{c}`")
 
+    # ── C-2: 計算列追加 ──────────────────────────────────────
+    with st.sidebar.expander("➕ 計算列の追加", expanded=False):
+        st.caption("既存の数値列を使って新しい列を作成できます。")
+        _calc_ops = ['+', '-', '×', '÷']
+        _num_opts = col_info['numeric']
+        if len(_num_opts) < 1:
+            st.info("数値列がありません。")
+        else:
+            _all_opts = _num_opts
+            cc1, cc2, cc3 = st.columns([3, 1, 3])
+            with cc1:
+                _lhs = st.selectbox("左辺", _all_opts, key='calc_lhs')
+            with cc2:
+                _op = st.selectbox("演算", _calc_ops, key='calc_op', label_visibility='collapsed')
+            with cc3:
+                _rhs_type = st.selectbox("右辺の種類", ['列', '定数'], key='calc_rhs_type', label_visibility='collapsed')
+            if _rhs_type == '列':
+                _rhs_col = st.selectbox("右辺（列）", _all_opts, key='calc_rhs_col')
+                _rhs_const = None
+            else:
+                _rhs_const = st.number_input("右辺（定数）", value=1.0, key='calc_rhs_const')
+                _rhs_col = None
+            _new_col_name = st.text_input(
+                "新しい列名",
+                value=f"{_lhs}_{_op}_{'定数' if _rhs_col is None else _rhs_col}",
+                key='calc_new_col',
+            ).strip()
+            if st.button("列を追加", key='calc_add_btn') and _new_col_name:
+                try:
+                    lhs_s = pd.to_numeric(df_raw[_lhs], errors='coerce')
+                    rhs_s = pd.to_numeric(df_raw[_rhs_col], errors='coerce') if _rhs_col else float(_rhs_const)
+                    _op_map = {'+': lhs_s + rhs_s, '-': lhs_s - rhs_s,
+                               '×': lhs_s * rhs_s, '÷': lhs_s / rhs_s}
+                    df_raw = df_raw.copy()
+                    df_raw[_new_col_name] = _op_map[_op]
+                    if _new_col_name not in col_info['numeric']:
+                        col_info['numeric'].append(_new_col_name)
+                    st.session_state[f'_calc_col_{_new_col_name}'] = True
+                    st.success(f"列「{_new_col_name}」を追加しました。")
+                except Exception as e:
+                    st.error(f"計算列の追加に失敗しました: {e}")
+            # 追加済み列の一覧
+            added = [k.replace('_calc_col_', '') for k in st.session_state if k.startswith('_calc_col_')]
+            if added:
+                st.caption("追加済み: " + ", ".join(f"`{c}`" for c in added))
+
     # ── C-5: 日付フォーマット手動指定 ────────────────────────
     custom_date_fmt = None
     if col_info['date']:
