@@ -574,6 +574,23 @@ def _render_sidebar():
         if cond_rules:
             st.caption(f"✅ {len(cond_rules)} 件のルールが有効")
 
+    # ── B-6: サンプリング方法 ────────────────────────────────
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🎲 大量データ時のサンプリング")
+    _samp_opts = {
+        'ランダム': 'random',
+        '先頭から': 'head',
+        '末尾から': 'tail',
+        '等間隔': 'systematic',
+    }
+    _samp_sel = st.sidebar.selectbox(
+        "サンプリング方法",
+        list(_samp_opts.keys()),
+        key='sampling_method',
+        help="10万行超のデータを表示する際の行選択方法。ランダム=再現性あり(seed=42)、等間隔=均等に間引き。",
+    )
+    sample_method = _samp_opts[_samp_sel]
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚡ 自動更新")
     auto_refresh = st.sidebar.checkbox("自動更新を有効にする", key='auto_refresh')
@@ -588,7 +605,7 @@ def _render_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"🕐 最終更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method
+    return df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method, sample_method
 
 
 # ── Condition filter helper ───────────────────────────────────
@@ -1831,7 +1848,7 @@ def _build_html_report(df, col_info, freq='D', selected_metrics=None):
 
 # ── Main ──────────────────────────────────────────────────────
 def main() -> None:
-    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method = _render_sidebar()
+    df_raw, col_info, is_demo, freq, auto_refresh, refresh_interval, cond_rules, custom_date_fmt, fill_method, sample_method = _render_sidebar()
 
     # C-5: 日付フォーマット手動指定
     if custom_date_fmt and col_info['date']:
@@ -1886,10 +1903,21 @@ def main() -> None:
             )
 
     if len(df) > 100_000:
+        _samp_n = 100_000
+        _method_label = {'random': 'ランダム', 'head': '先頭から', 'tail': '末尾から', 'systematic': '等間隔'}
         st.warning(
-            f"データが大きいため（{len(df):,} 行）、10 万行にサンプリングして表示します。"
+            f"データが大きいため（{len(df):,} 行）、{_samp_n:,} 行に"
+            f"サンプリング（{_method_label.get(sample_method, 'ランダム')}）して表示します。"
         )
-        df = df.sample(100_000, random_state=42).reset_index(drop=True)
+        if sample_method == 'head':
+            df = df.head(_samp_n).reset_index(drop=True)
+        elif sample_method == 'tail':
+            df = df.tail(_samp_n).reset_index(drop=True)
+        elif sample_method == 'systematic':
+            step = max(1, len(df) // _samp_n)
+            df = df.iloc[::step].head(_samp_n).reset_index(drop=True)
+        else:
+            df = df.sample(_samp_n, random_state=42).reset_index(drop=True)
 
     tabs = st.tabs([
         "📋 ダッシュボード",
