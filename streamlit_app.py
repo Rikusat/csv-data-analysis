@@ -341,7 +341,7 @@ def _render_sidebar():
         df_raw = _demo_data()
     else:
         _total_bytes = sum(f.size for f in uploaded_list)
-        if _total_bytes > 50 * 1024 * 1024:
+        if _total_bytes > 200 * 1024 * 1024:
             st.sidebar.warning(
                 f"合計ファイルサイズが大きいです（{_total_bytes / 1024 / 1024:.0f} MB）。"
                 "読み込みに時間がかかる場合があります。"
