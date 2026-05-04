@@ -574,6 +574,59 @@ def _render_sidebar():
         if cond_rules:
             st.caption(f"✅ {len(cond_rules)} 件のルールが有効")
 
+    # ── C-3: フィルター条件の共有 ─────────────────────────────
+    with st.sidebar.expander("📤 フィルター条件の共有", expanded=False):
+        st.caption("現在のフィルター条件を JSON でエクスポートしたり、過去の条件を復元できます。")
+
+        # Build current state
+        _fstate: dict = {'date_range': None, 'category': {}, 'conditions': cond_rules}
+        _dr = st.session_state.get('filter_date_range')
+        if _dr and len(_dr) == 2:
+            _fstate['date_range'] = [str(_dr[0]), str(_dr[1])]
+        for _fc in col_info.get('category', []):
+            _fv = st.session_state.get(f'filter_cat_{_fc}')
+            if _fv and _fv != 'すべて':
+                _fstate['category'][_fc] = _fv
+
+        import json as _json
+        _state_json = _json.dumps(_fstate, ensure_ascii=False, indent=2)
+        st.download_button(
+            "⬇️ 現在の条件を JSON でダウンロード",
+            data=_state_json.encode('utf-8'),
+            file_name="filter_conditions.json",
+            mime="application/json",
+            key='dl_filter_state',
+        )
+
+        st.markdown("**インポート（JSON を貼り付け）**")
+        _import_txt = st.text_area(
+            "フィルター条件 JSON",
+            value="",
+            height=100,
+            key='filter_import_txt',
+            label_visibility='collapsed',
+            placeholder='{"date_range": [...], "category": {...}, "conditions": [...]}',
+        )
+        if st.button("フィルターを適用", key='filter_import_btn') and _import_txt.strip():
+            try:
+                _imp = _json.loads(_import_txt)
+                if _imp.get('date_range') and len(_imp['date_range']) == 2:
+                    st.session_state['filter_date_range'] = (
+                        pd.Timestamp(_imp['date_range'][0]).date(),
+                        pd.Timestamp(_imp['date_range'][1]).date(),
+                    )
+                for _col, _val in _imp.get('category', {}).items():
+                    st.session_state[f'filter_cat_{_col}'] = _val
+                for _ri, (_rc, _ro, _rv) in enumerate(_imp.get('conditions', [])[:5]):
+                    st.session_state[f'cond_col_{_ri}'] = _rc
+                    st.session_state[f'cond_op_{_ri}']  = _ro
+                    st.session_state[f'cond_val_{_ri}'] = _rv
+                if _imp.get('conditions'):
+                    st.session_state['cond_n_rules'] = len(_imp['conditions'])
+                st.rerun()
+            except Exception as _e:
+                st.error(f"JSON の解析に失敗しました: {_e}")
+
     # ── B-6: サンプリング方法 ────────────────────────────────
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🎲 大量データ時のサンプリング")
@@ -684,6 +737,21 @@ def _apply_overlay_lines(fig, target, usl, lsl) -> None:
             annotation_position='bottom right',
             annotation_font=dict(color='#ef4444', size=11),
         )
+
+
+def _apply_event_annotations(fig, events: list) -> None:
+    """Add vertical event marker lines to a Plotly figure."""
+    for ev in events:
+        try:
+            fig.add_vline(
+                x=str(pd.Timestamp(ev['date'])),
+                line_color='#f59e0b', line_dash='dash', line_width=1.5,
+                annotation_text=_html.escape(str(ev['label'])),
+                annotation_position='top',
+                annotation_font=dict(color='#92400e', size=10),
+            )
+        except Exception:
+            pass
 
 
 # ── Period comparison helpers ────────────────────────────────
@@ -1076,12 +1144,60 @@ def _tab_timeseries(df: pd.DataFrame, col_info: dict, freq: str = 'D') -> None:
                 if len(selected_metrics) > 1:
                     st.caption("📏 目標線・規格線は指標を1つ選択しているときに正確に適用されます。複数指標では Y 軸スケールが混在します。")
                 _apply_overlay_lines(fig, target_val, usl_val, lsl_val)
+            # C-4: イベントアノテーションを適用
+            _ev_anns = st.session_state.get('event_annotations', [])
+            if _ev_anns:
+                _apply_event_annotations(fig, _ev_anns)
             _render_chart(fig, 'timeseries.png', 'dl_ts')
         else:
             st.error(
                 f"トレンドグラフを生成できませんでした。"
                 f"指標「{'、'.join(selected_metrics)}」と日付列「{date_col}」に有効なデータがあるか確認してください。"
             )
+
+    # ── C-4: イベントアノテーション UI ───────────────────────
+    with st.expander("📌 イベントアノテーション", expanded=False):
+        st.caption("日付とラベルを入力してトレンドグラフに垂直マーカーを追加できます。")
+        _ann_c1, _ann_c2, _ann_c3 = st.columns([3, 4, 1])
+        with _ann_c1:
+            _ann_date = st.text_input(
+                "日付", placeholder="2024-01-15", key='ann_date_input',
+                help="YYYY-MM-DD 形式で入力してください。",
+            )
+        with _ann_c2:
+            _ann_label = st.text_input("ラベル", placeholder="設備メンテナンス", key='ann_label_input')
+        with _ann_c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("追加", key='ann_add_btn', use_container_width=True):
+                if _ann_date.strip() and _ann_label.strip():
+                    try:
+                        pd.Timestamp(_ann_date)  # validate
+                        if 'event_annotations' not in st.session_state:
+                            st.session_state['event_annotations'] = []
+                        st.session_state['event_annotations'].append(
+                            {'date': _ann_date.strip(), 'label': _ann_label.strip()}
+                        )
+                        st.rerun()
+                    except Exception:
+                        st.error("日付の形式が正しくありません。YYYY-MM-DD で入力してください。")
+                else:
+                    st.warning("日付とラベルの両方を入力してください。")
+
+        _anns = st.session_state.get('event_annotations', [])
+        if _anns:
+            for _i, _ann in enumerate(_anns):
+                _ca, _cb = st.columns([6, 1])
+                with _ca:
+                    st.caption(f"📍 {_ann['date']} — {_ann['label']}")
+                with _cb:
+                    if st.button("削除", key=f'ann_del_{_i}', use_container_width=True):
+                        st.session_state['event_annotations'].pop(_i)
+                        st.rerun()
+            if st.button("全削除", key='ann_clear_all'):
+                st.session_state['event_annotations'] = []
+                st.rerun()
+        else:
+            st.caption("アノテーションはまだありません。")
 
     # ── SPC 管理図 ────────────────────────────────────────────
     st.markdown('<p class="section-title">SPC 管理図（±3σ 制御限界）</p>', unsafe_allow_html=True)
