@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 
 _ACCENT = '#2563EB'

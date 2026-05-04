@@ -1,7 +1,7 @@
 """Column auto-detection logic for CSV DataFrames."""
 
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 DATE_KEYWORDS = [
@@ -98,7 +98,7 @@ def prepare_date_column(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
 # ── Private helpers ──────────────────────────────────────────
 
 
-def _is_date_column(series: pd.Series, col_lower: str) -> bool:
+def _is_date_column(series: pd.Series, col_lower: str) -> bool:  # noqa: C901
     if pd.api.types.is_datetime64_any_dtype(series):
         return True
 
