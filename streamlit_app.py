@@ -236,6 +236,9 @@ def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFram
             raise ValueError(f"Excelファイルの読み込みに失敗しました: {exc}") from exc
 
     # CSV: try encodings, sniff delimiter
+    _CHUNK_THRESHOLD = 30 * 1024 * 1024   # 30 MB: use chunked reading above this
+    _SAMPLE_ROWS = 200_000                  # max rows to keep from large files
+
     for enc in ('utf-8', 'utf-8-sig', 'shift-jis', 'cp932'):
         try:
             raw = file_bytes[:8192].decode(enc, errors='ignore')
@@ -244,7 +247,23 @@ def _load_file(file_bytes: bytes, filename: str, sheet_name=None) -> pd.DataFram
                 sep = dialect.delimiter
             except csv.Error:
                 sep = ','
-            df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=sep)
+
+            if len(file_bytes) > _CHUNK_THRESHOLD:
+                # Chunked read: accumulate up to _SAMPLE_ROWS rows
+                chunks = []
+                total_rows = 0
+                for chunk in pd.read_csv(
+                    io.BytesIO(file_bytes), encoding=enc, sep=sep,
+                    chunksize=50_000, on_bad_lines='skip',
+                ):
+                    chunks.append(chunk)
+                    total_rows += len(chunk)
+                    if total_rows >= _SAMPLE_ROWS:
+                        break
+                df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+            else:
+                df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=sep)
+
             # If only 1 column detected with ',', retry with other separators
             if df.shape[1] <= 1:
                 for alt in ('\t', ';', '|'):
