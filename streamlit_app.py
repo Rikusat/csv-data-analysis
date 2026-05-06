@@ -2039,7 +2039,7 @@ def main() -> None:
         with col_banner:
             st.markdown(
                 '<div class="demo-banner">'
-                '🔵 半導体工場サンプルデータを表示中です。'
+                '🔵 サンプルデータを表示中です。'
                 'サイドバーから実データ CSV をアップロードすると切り替わります。'
                 '</div>',
                 unsafe_allow_html=True,
